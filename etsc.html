@@ -1,0 +1,2283 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ENN tokamak system code</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/element-plus/dist/index.full.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: 'Microsoft YaHei', Arial, sans-serif; 
+            background: #f5f7fa;
+        }
+        .lang-switch { 
+            position: fixed; 
+            top: 20px; 
+            right: 20px; 
+            z-index: 1000; 
+        }
+        .main-container { 
+            padding: 20px; 
+            max-width: 1400px; 
+            margin: 0 auto; 
+        }
+        .result-area { 
+            margin-top: 20px; 
+        }
+        #plot-container { 
+            width: 100%; 
+            height: 500px; 
+        }
+        .param-form .el-form-item {
+            margin-bottom: 4px;
+        }
+        .param-form .el-form-item__label {
+            font-size: 12px;
+            line-height: 1.2;
+        }
+        .scan-controls .el-col {
+            margin-bottom: 4px;
+        }
+        .compact-card {
+            margin-bottom: 6px;
+        }
+        .compact-card .el-card__header {
+            padding: 6px 10px;
+        }
+        .compact-card .el-card__body {
+            padding: 6px 10px;
+        }
+        .left-panel {
+            height: calc(100vh - 100px);
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+        .el-input-number--mini .el-input__inner {
+            font-size: 11px;
+        }
+        .el-form-item__label {
+            font-size: 12px !important;
+            line-height: 1.2 !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- 语言切换按钮 -->
+        <div class="lang-switch">
+            <el-button 
+                @click="showHelp = true" 
+                circle
+                type="info"
+                size="small"
+                style="margin-right: 10px;"
+                :title="t('help')"
+            >
+                ?
+            </el-button>
+            <el-button-group>
+                <el-button :type="lang === 'zh' ? 'primary' : 'default'" @click="setLang('zh')">中</el-button>
+                <el-button :type="lang === 'en' ? 'primary' : 'default'" @click="setLang('en')">EN</el-button>
+            </el-button-group>
+        </div>
+        
+        <!-- 帮助对话框 -->
+        <el-dialog 
+            :title="t('helpTitle')" 
+            v-model="showHelp" 
+            width="600px"
+            :close-on-click-modal="true"
+        >
+            <div style="line-height: 1.8; font-size: 14px;">
+                <p style="margin-bottom: 15px; color: #e74c3c; font-weight: bold;">
+                    {{ t('helpNote') }}
+                </p>
+                <p style="margin-bottom: 15px;">
+                    <strong>{{ t('helpRefs') }}</strong><br>
+                    • Liu et al, Phys. Plasmas 31, 062507 (2024)<br>
+                    • Xie et al, Phys. Plasmas 32, 064702 (2025)<br>
+                    • Cai et al, Fusion Sci. Technol. 78(2), 149-163 (2022)
+                </p>
+                <p style="margin-bottom: 15px;">
+                    <strong>{{ t('helpAuthors') }}</strong><br>
+                    • Huasheng XIE (matlab version, huashengxie@gmail.com)<br>
+                    • Dongkai Qi (html+js version)
+                </p>
+                <p style="margin-bottom: 0;">
+                    <strong>{{ t('helpDownload') }}</strong><br>
+                    <a href="https://github.com/hsxie/enntokamaksystemcode" target="_blank" style="color: #409eff; text-decoration: none;">
+                        https://github.com/hsxie/enntokamaksystemcode
+                    </a>
+                </p>
+            </div>
+            <template #footer>
+                <el-button @click="showHelp = false" type="primary">{{ t('helpClose') }}</el-button>
+            </template>
+        </el-dialog>
+
+        <div class="main-container">
+            <!-- 标题行和收起按钮 -->
+            <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 30px; position: relative;">
+                <el-button 
+                    @click="collapsedLeft = !collapsedLeft" 
+                    circle
+                    type="primary"
+                    style="position: absolute; left: 0; top: 50%; transform: translateY(-50%);"
+                    size="small"
+                >
+                    {{ collapsedLeft ? '>>' : '<<' }}
+                </el-button>
+                <h1 style="color: #2c3e50; margin: 0;">
+                    {{ t('title') }}
+                </h1>
+            </div>
+            
+            <!-- 主要内容区域 -->
+            <el-row :gutter="20">
+                <!-- 左侧参数控制面板 -->
+                <el-col :span="collapsedLeft ? 0 : 8" v-show="!collapsedLeft">
+                    <div class="left-panel">
+                    <!-- 预设场景和反应类型 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('inputParams') }}</span>
+                        </template>
+                        
+                        <el-form :model="params" label-width="140px" class="param-form" size="small">
+                            <el-form-item :label="t('presetScenario')" style="margin-bottom: 6px;">
+                                <el-select v-model="selectedPreset" @change="loadPreset" style="width: 100%" size="small">
+                                    <el-option v-for="(preset, name) in presets" :key="name" :label="name" :value="name" />
+                                </el-select>
+                            </el-form-item>
+                            
+                            <!-- 聚变反应类型 -->
+                            <el-form-item :label="t('fusionReaction')" style="margin-bottom: 6px;">
+                                <el-select v-model="params.icase" style="width: 100%" size="small">
+                                    <el-option v-for="(name, id) in icaseMap" :key="id" :label="`${id}: ${name}`" :value="parseInt(id)" />
+                                    <!-- <el-option v-for="(name, id) in icaseMap" :key="id" :label="`${name}`" :value="parseInt(id)" /> -->
+                                </el-select>
+                            </el-form-item>
+                        </el-form>
+                    </el-card>
+
+                    <!-- 装置几何参数 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('geometryParams') }}</span>
+                        </template>
+                        <el-form :model="params" label-width="80px" class="param-form" size="small">
+                            <el-row :gutter="4">
+                                <el-col :span="12" v-for="param in geometryParams" :key="param.id">
+                                    <el-tooltip :content="lang === 'zh' ? param.tooltip_zh : param.tooltip_en" placement="top">
+                                        <el-form-item :label="lang === 'zh' ? param.label_zh : param.label_en" style="margin-bottom: 4px;">
+                                            <el-input-number 
+                                                v-model="params[param.id]" 
+                                                :step="param.step" 
+                                                :precision="param.precision || 3"
+                                                style="width: 100%"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                                <!-- 计算得出的小半径显示 -->
+                                <el-col :span="12">
+                                    <el-tooltip :content="lang === 'zh' ? '小半径 (a₀=R₀/A)' : 'Minor radius (a₀=R₀/A)'" placement="top">
+                                        <el-form-item :label="lang === 'zh' ? 'a₀ [m]' : 'a₀'" style="margin-bottom: 4px;">
+                                            <el-input 
+                                                :value="(params.R0 / params.A).toFixed(3)"
+                                                readonly
+                                                style="width: 100%"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                            </el-row>
+                        </el-form>
+                    </el-card>
+
+
+
+                    <!-- 等离子参数 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('plasmaParams') }}</span>
+                        </template>
+                        <el-form :model="params" label-width="80px" class="param-form" size="small">
+                            <el-row :gutter="4">
+                                <el-col :span="12" v-for="param in plasmaParams" :key="param.id">
+                                    <el-tooltip :content="lang === 'zh' ? param.tooltip_zh : param.tooltip_en" placement="top">
+                                        <el-form-item :label="lang === 'zh' ? param.label_zh : param.label_en" style="margin-bottom: 4px;">
+                                            <el-input-number 
+                                                v-model="params[param.id]" 
+                                                :step="param.step" 
+                                                :precision="param.precision || 3"
+                                                style="width: 100%"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                            </el-row>
+                        </el-form>
+                    </el-card>
+
+                    <!-- 其他参数 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('otherParams') }}</span>
+                        </template>
+                        <el-form :model="params" label-width="80px" class="param-form" size="small">
+                            <el-row :gutter="4">
+                                <el-col :span="12" v-for="param in otherParams" :key="param.id">
+                                    <el-tooltip :content="lang === 'zh' ? param.tooltip_zh : param.tooltip_en" placement="top">
+                                        <el-form-item :label="lang === 'zh' ? param.label_zh : param.label_en" style="margin-bottom: 4px;">
+                                            <el-input-number 
+                                                v-model="params[param.id]" 
+                                                :step="param.step" 
+                                                :precision="param.precision || 3"
+                                                style="width: 100%"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                            </el-row>
+                        </el-form>
+                    </el-card>
+                    
+                    <!-- 扫描控制面板 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('scanOptions') }}</span>
+                        </template>
+                        
+                        <el-form label-width="50px" class="scan-controls" size="small">
+                            <el-row :gutter="4">
+                                <el-col :span="12">
+                                    <el-form-item :label="t('xAxis')" style="margin-bottom: 8px;">
+                                        <el-select v-model="scanX" style="width: 100%" size="mini">
+                                            <el-option v-for="param in paramDefs" :key="param.id" :label="lang === 'zh' ? param.label_zh : param.label_en" :value="param.id" />
+                                        </el-select>
+                                    </el-form-item>
+                                </el-col>
+                                <el-col :span="12">
+                                    <el-form-item :label="t('yAxis')" style="margin-bottom: 8px;">
+                                        <el-select v-model="scanY" style="width: 100%" size="mini">
+                                            <el-option v-for="param in paramDefs" :key="param.id" :label="lang === 'zh' ? param.label_zh : param.label_en" :value="param.id" />
+                                        </el-select>
+                                    </el-form-item>
+                                </el-col>
+                            </el-row>
+                            
+                            <el-form-item :label="t('xRange')" style="margin-bottom: 8px;">
+                                <el-row :gutter="4">
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('xStartTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.xStart" :precision="3" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('xEndTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.xEnd" :precision="3" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('xStepsTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.xSteps" :min="5" :max="50" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                </el-row>
+                            </el-form-item>
+                            
+                            <el-form-item :label="t('yRange')" style="margin-bottom: 8px;">
+                                <el-row :gutter="4">
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('yStartTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.yStart" :precision="3" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('yEndTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.yEnd" :precision="3" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                    <el-col :span="8">
+                                        <el-tooltip :content="t('yStepsTooltip')" placement="top">
+                                            <el-input-number v-model="scanRange.ySteps" :min="5" :max="50" size="mini" style="width: 100%;" controls-position="right" />
+                                        </el-tooltip>
+                                    </el-col>
+                                </el-row>
+                            </el-form-item>
+                            
+                            <!-- 分隔线 -->
+                            <el-divider style="margin: 12px 0;">
+                                <span style="font-size: 12px; color: #666;">{{ t('bestRegionSettings') }}</span>
+                            </el-divider>
+                            
+                            <!-- Best Region 阈值设置 -->
+                            <el-row :gutter="6" style="margin-bottom: 8px;">
+                                <el-col :span="12">
+                                    <el-tooltip :content="lang === 'zh' ? '最大加热功率阈值' : 'Maximum heating power threshold'" placement="top">
+                                        <el-form-item :label="t('PheatmaxLabel')" style="margin-bottom: 4px;" label-width="75px">
+                                            <el-input-number 
+                                                v-model="bestRegionThresholds.Pheatmax" 
+                                                :step="10" 
+                                                :precision="1"
+                                                style="width: 100%;"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                                <el-col :span="12">
+                                    <el-tooltip :content="lang === 'zh' ? '最小聚变功率阈值' : 'Minimum fusion power threshold'" placement="top">
+                                        <el-form-item :label="t('PfusminLabel')" style="margin-bottom: 4px;" label-width="75px">
+                                            <el-input-number 
+                                                v-model="bestRegionThresholds.Pfusmin" 
+                                                :step="1" 
+                                                :precision="1"
+                                                style="width: 100%;"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                            </el-row>
+                            <el-row :gutter="6" style="margin-bottom: 8px;">
+                                <el-col :span="12">
+                                    <el-tooltip :content="lang === 'zh' ? '最小聚变增益因子阈值' : 'Minimum fusion gain factor threshold'" placement="top">
+                                        <el-form-item :label="t('QminLabel')" style="margin-bottom: 4px;" label-width="75px">
+                                            <el-input-number 
+                                                v-model="bestRegionThresholds.Qmin" 
+                                                :step="0.1" 
+                                                :precision="2"
+                                                style="width: 100%;"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                                <el-col :span="12">
+                                    <el-tooltip :content="lang === 'zh' ? '最大密度极限比阈值' : 'Maximum density limit ratio threshold'" placement="top">
+                                        <el-form-item :label="t('n0maxLabel')" style="margin-bottom: 4px;" label-width="75px">
+                                            <el-input-number 
+                                                v-model="bestRegionThresholds.n0max" 
+                                                :step="0.1" 
+                                                :precision="2"
+                                                style="width: 100%;"
+                                                controls-position="right"
+                                                size="mini"
+                                            />
+                                        </el-form-item>
+                                    </el-tooltip>
+                                </el-col>
+                            </el-row>
+                        </el-form>
+                    </el-card>
+                    
+                    <!-- 绘图选项和控制 -->
+                    <el-card shadow="hover" class="compact-card">
+                        <template #header>
+                            <span style="font-weight: bold; font-size: 14px;">{{ t('plotAndControl') }}</span>
+                        </template>
+                        
+                        <el-form size="small">
+                            <el-form-item :label="t('plotQuantities')" style="margin-bottom: 6px;">
+                                <el-checkbox-group v-model="plotOptions" size="mini">
+                                    <el-row :gutter="2">
+                                        <el-col :span="8" v-for="opt in plotQuantities" :key="opt.id">
+                                            <el-tooltip :content="lang === 'zh' ? opt.tooltip_zh : opt.tooltip_en" placement="top">
+                                                <el-checkbox :label="opt.id" style="font-size: 10px; margin: 1px 0; line-height: 1.2;">
+                                                    {{ opt.name }}
+                                                </el-checkbox>
+                                            </el-tooltip>
+                                        </el-col>
+                                    </el-row>
+                                </el-checkbox-group>
+                            </el-form-item>
+                            
+
+                            
+                            <!-- 计算按钮 -->
+                            <el-form-item style="margin-bottom: 8px;">
+                                <el-row :gutter="8">
+                                    <el-col :span="12">
+                                        <el-button type="primary" @click="calculateSingle" :loading="calculating" style="width: 100%;" size="small">
+                                            {{ t('singlePoint') }}
+                                        </el-button>
+                                    </el-col>
+                                    <el-col :span="12">
+                                        <el-button type="success" @click="runScan" :loading="scanning" style="width: 100%;" size="small">
+                                            {{ t('twoDScan') }}
+                                        </el-button>
+                                    </el-col>
+                                </el-row>
+                            </el-form-item>
+                            
+                            <!-- 保存/加载按钮 -->
+                            <el-form-item style="margin-bottom: 8px;">
+                                <el-row :gutter="8">
+                                    <el-col :span="12">
+                                        <el-button type="info" @click="saveParameters" style="width: 100%;" size="small">
+                                            {{ t('saveParams') }}
+                                        </el-button>
+                                    </el-col>
+                                    <el-col :span="12">
+                                        <el-button type="warning" @click="triggerLoadFile" style="width: 100%;" size="small">
+                                            {{ t('loadParams') }}
+                                        </el-button>
+                                        <input ref="fileInput" type="file" accept=".json,.txt" @change="loadParameters" style="display: none;" />
+                                    </el-col>
+                                </el-row>
+                            </el-form-item>
+                            
+                            <!-- 状态显示 -->
+                            <el-alert v-if="statusMessage" :title="statusMessage" type="info" :closable="false" size="small" />
+                        </el-form>
+                    </el-card>
+                    </div>
+                </el-col>
+                
+                <!-- 右侧结果显示区域 -->
+                <el-col :span="collapsedLeft ? 24 : 16">
+                    <el-card shadow="hover">
+                        <template #header>
+                            <span style="font-weight: bold;">{{ t('results') }}</span>
+                        </template>
+                        
+                        <el-tabs v-model="activeTab">
+                            <el-tab-pane :label="t('detailedResults')" name="detail">
+                                <el-input
+                                    v-model="resultText"
+                                    type="textarea"
+                                    :rows="20"
+                                    readonly
+                                    style="font-family: 'Consolas', monospace; font-size: 12px;"
+                                />
+                            </el-tab-pane>
+                            
+                            <el-tab-pane :label="t('contourPlot')" name="plot">
+                                <div id="plot-container" style="width: 100%; height: calc(100vh - 200px);"></div>
+                            </el-tab-pane>
+                            
+                            <el-tab-pane :label="t('crossSection')" name="shape">
+                                <div style="display: flex; width: 100%; height: calc(100vh - 200px);">
+                                    <div id="shape-container" style="width: 60%; height: 100%;"></div>
+                                    <div style="width: 40%; height: 100%; display: flex; flex-direction: column;">
+                                        <div id="density-profile-container" style="width: 100%; height: 50%;"></div>
+                                        <div id="temperature-profile-container" style="width: 100%; height: 50%;"></div>
+                                    </div>
+                                </div>
+                            </el-tab-pane>
+                        </el-tabs>
+                    </el-card>
+                </el-col>
+            </el-row>
+        </div>
+    </div>
+
+<script>
+// ========== 物理常数 ==========
+const qe = 1.6022e-19;    // 电子电荷 (C)
+const mp = 1.6726e-27;    // 质子质量 (kg)
+const mu0 = 4e-7 * Math.PI; // 真空磁导率 (H/m)
+const mec2 = 511;         // 电子静质能 (keV)
+
+// ========== 辅助数学函数 ==========
+const linspace = (start, stop, num) => {
+    const step = (stop - start) / (num - 1);
+    return Array.from({length: num}, (_, i) => start + i * step);
+};
+
+// Gamma函数（Lanczos近似）
+function logGamma(z) {
+    const g = 7;
+    const p = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 
+               771.32342877765313, -176.61502916214059, 12.507343278686905, 
+               -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+    if (z < 0.5) return Math.PI / (Math.sin(Math.PI * z) * Math.exp(logGamma(1 - z)));
+    z -= 1;
+    let x = p[0];
+    for (let i = 1; i < g + 2; i++) x += p[i] / (z + i);
+    const t = z + g + 0.5;
+    return Math.log(Math.sqrt(2 * Math.PI)) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+}
+const gamma = z => Math.exp(logGamma(z));
+
+// ========== 反应截面函数 ==========
+
+// D-T反应截面 (fsgmdt.m)
+const fsgmdt = E_in => E_in.map(e => {
+    if (e <= 0) return NaN;
+    const BGdt = 34.3827; 
+    let Sdt;
+    if (e < 550) {
+        const num = 6.927e4 + 7.454e8*e + 2.05e6*e**2 + 5.2002e4*e**3;
+        const den = 1.0 + 6.38e1*e - 9.95e-1*e**2 + 6.981e-5*e**3 + 1.728e-4*e**4;
+        Sdt = num / den;
+    } else if (e <= 4700) {
+        const den = 1.0 - 8.4127e-3*e + 4.7983e-6*e**2 - 1.0748e-9*e**3 + 8.85184e-14*e**4;
+        Sdt = -1.4714e6 / den;
+    } else { 
+        return NaN; 
+    }
+    return Sdt / (e * Math.exp(BGdt / Math.sqrt(e))) * 1e-31;  // 修正：使用1e-31与MATLAB一致
+});
+
+// D-D反应截面总和 (fsgmdd1.m + fsgmdd2.m)
+const fsgmdd_total = E_in => E_in.map(e => {
+    if (e <= 0 || e > 4900) return NaN;
+    const BGdd = 31.3970;
+    const Sdd1 = 5.5576e4 + 2.1054e2*e - 3.2638e-2*e**2 + 1.4987e-6*e**3 + 1.8181e-10*e**4;
+    const Sdd2 = 5.3701e4 + 3.3027e2*e - 1.2706e-1*e**2 + 2.9327e-5*e**3 - 2.5151e-9*e**4;
+    return (Sdd1 + Sdd2) / (e * Math.exp(BGdd / Math.sqrt(e))) * 1e-31;  // 修正：使用1e-31与MATLAB一致
+});
+
+// D-He3反应截面 (fsgmdhe.m)
+const fsgmdhe = E_in => E_in.map(e => {
+    if (e <= 0) return NaN;
+    const BGdhe = 68.7508; 
+    let Sdhe;
+    if (e < 900) {
+        const num = 5.7501e6 + 2.5226e3*e + 4.5566e1*e**2;
+        const den = 1.0 - 3.1995e-3*e - 8.5530e-6*e**2 + 5.9014e-8*e**3;
+        Sdhe = num / den;
+    } else if (e <= 4800) {
+        const den = 1.0 - 2.6830e-3*e + 1.1633e-6*e**2 - 2.1332e-10*e**3 + 1.4250e-14*e**4;
+        Sdhe = -8.3993e5 / den;
+    } else { 
+        return NaN; 
+    }
+    return Sdhe / (e * Math.exp(BGdhe / Math.sqrt(e))) * 1e-31;  // 修正：使用1e-31与MATLAB一致
+});
+
+// p-B11反应截面 (fsgmpb.m) - Nevins数据
+const fsgmpb = E_in => E_in.map(e => {
+    if (e < 0.5 || e > 3500) return NaN;
+    const BGpb = 148.9596; // sqrt(22.589e3)
+    let Spb;
+    if (e <= 400) {
+        Spb = 1.97e5 + 0.24e3 * e + 2.31e-1 * e**2 + 1.82e7 / ((e - 148)**2 + 2.35**2);
+    } else if (e <= 642) {
+        const E2 = e / 100 - 4; // 特殊变换
+        Spb = 3.30e5 + 66.1e3 * E2 - 20.3e3 * E2**2 - 1.58e3 * E2**5;
+    } else {
+        Spb = 4.38e3 + 2.57e9 / ((e - 581.3)**2 + 85.7**2) + 5.67e8 / ((e - 1083)**2 + 234**2) +
+              1.34e8 / ((e - 2405)**2 + 138**2) + 5.68e8 / ((e - 3344)**2 + 309**2);
+    }
+    return Spb / e * Math.exp(-BGpb / Math.sqrt(e)) * 1e-28; // 与MATLAB一致（p-B11使用1e-28）
+});
+
+// p-B11反应截面 (fsgmpb2.m) - Sikora数据
+const fsgmpb2 = E_in => {
+    const pBweller = [
+        [140.8,0.006],[207.6,0.035],[237.0,0.057],[277.1,0.129],[370.7,0.390],
+        [453.5,0.725],[528.4,1.194],[600.6,1.396],[670.1,1.145],[734.2,0.720],
+        [803.7,0.463],[865.2,0.331],[913.3,0.316],[993.5,0.304],[1103.1,0.318],
+        [1191.3,0.329],[1284.9,0.339],[1375.8,0.324],[1466.7,0.300],[1557.6,0.273],
+        [1651.1,0.249],[1742.0,0.245],[1832.9,0.247],[1923.8,0.269],[2014.7,0.312],
+        [2108.2,0.371],[2199.1,0.480],[2292.7,0.596],[2380.9,0.702],[2474.4,0.608],
+        [2565.3,0.443],[2656.2,0.341],[2747.1,0.351],[2840.7,0.402],[2931.6,0.455],
+        [3022.4,0.535],[3116.0,0.596],[3206.9,0.651],[3297.8,0.684],[3388.7,0.686],
+        [3482.2,0.651]
+    ];
+    const dat_x = pBweller.map(p => p[0]); 
+    const dat_y = pBweller.map(p => p[1]);
+    
+    function interp1(xi) {
+        if (xi < dat_x[0] || xi > dat_x[dat_x.length - 1]) return NaN;
+        const i = dat_x.findIndex(val => val >= xi); 
+        if (i === 0) return dat_y[0];
+        const [x0, y0] = [dat_x[i - 1], dat_y[i - 1]]; 
+        const [x1, y1] = [dat_x[i], dat_y[i]];
+        return y0 + (y1 - y0) * (xi - x0) / (x1 - x0);
+    }
+    
+    return E_in.map(e => {
+        if (e < 200) return fsgmpb([e])[0]; // 低能量时使用Nevins数据
+        return interp1(e) * 1e-28; // mb转换为m^2（与MATLAB一致）
+    });
+};
+
+// ========== 反应率计算 (fsgmv.m) ==========
+const sgmv_cache = new Map();
+
+function fsgmv(Teff, icase) {
+    if (Teff <= 0) return 0;
+    const cacheKey = `${Teff.toPrecision(4)}_${icase}`;
+    if (sgmv_cache.has(cacheKey)) return sgmv_cache.get(cacheKey);
+    
+    const md = 2*mp, mt = 3*mp, mhe = 3*mp, mb = 11*mp;
+    let sigma_func, Mr;
+    
+    switch (icase) {
+        case 1: sigma_func = fsgmdt; Mr = (md * mt) / (md + mt); break;
+        case 2: sigma_func = fsgmdd_total; Mr = (md * md) / (md + md); break;
+        case 3: sigma_func = fsgmdhe; Mr = (md * mhe) / (md + mhe); break;
+        case 4: sigma_func = fsgmpb; Mr = (mp * mb) / (mp + mb); break;
+        case 5: sigma_func = fsgmpb2; Mr = (mp * mb) / (mp + mb); break;
+        case 6: sigma_func = fsgmdd_total; Mr = (md * md) / (md + md); break;  // case 6 使用D-D截面
+        default: return 0;
+    }
+    
+    // 修正：使用与MATLAB一致的对数网格 E=10.^(-1:0.0005:3.6)
+    const E_grid = [];
+    for (let log_e = -1; log_e <= 3.6; log_e += 0.0005) {
+        E_grid.push(Math.pow(10, log_e));
+    }
+    
+    const sigma = sigma_func(E_grid);
+    let integral = 0;
+    
+    // 修正：使用与MATLAB一致的积分方法（从E[2:end]开始，使用diff(E)）
+    for (let i = 1; i < E_grid.length; i++) {
+        if (!isNaN(sigma[i])) {
+            const dE = E_grid[i] - E_grid[i-1];  // diff(E)
+            integral += E_grid[i] * sigma[i] * dE * Math.exp(-E_grid[i] / Teff);
+        }
+    }
+    
+    // 修正：使用与MATLAB一致的前面系数
+    const sgmv_val = Math.sqrt(qe*1e3*Teff*8/(Math.PI*Mr)) / (Teff**2) * integral;
+    sgmv_cache.set(cacheKey, sgmv_val);
+    return sgmv_val;
+}
+
+// ========== 主物理计算函数 (funsc.m) ==========
+function funsc(R0, A, kappa, delta, Sn, ST, ni0, Ti0, fT, fsig, f1, BT0, Ip, tauE, fHe, fimp, Zimp, Rw, g, icase) {
+    // 几何参数
+    const a = R0 / A;
+    const Ad = R0 / (g + a);  // 修正：添加Ad计算
+    const Vp = (2*Math.PI**2*kappa*(A-delta) + 16*Math.PI*kappa*delta/3) * a**3;
+    const Sp = (4*Math.PI**2*A*kappa**0.65 - 4*kappa*delta) * a**2;
+    const Sw = (4*Math.PI**2*Ad*kappa**0.65 - 4*kappa*delta) * (a+g)**2;  // 修正：添加Sw计算
+    
+    // 温度和密度
+    const Te0 = fT * Ti0;
+    const f12 = 1.0 - fHe - fimp;
+    const n120 = f12 * ni0;
+    
+    // 剖面积分 - 修正：与MATLAB完全一致，不需要乘以dx
+    const x_grid = linspace(0, 1, 101);  // 对应MATLAB的x=0:0.01:1.0
+    const dx = x_grid[1] - x_grid[0];
+    let fTavg_num = 0, fnavg_num = 0, sum_x = 0;
+    x_grid.forEach(x => { 
+        fTavg_num += x*(1-x**2)**ST; 
+        fnavg_num += x*(1-x**2)**Sn; 
+        sum_x += x; 
+    });
+    const fTavg = fTavg_num / sum_x; 
+    const fnavg = fnavg_num / sum_x;
+
+    // 反应率积分 - 修正为与MATLAB一致的积分方式
+    let phi_integrand = 0;
+    for(let i = 0; i < x_grid.length; ++i) {
+        const x = x_grid[i];
+        const Tx = Ti0 * (1 - x**2)**ST;
+        const sgv = fsgmv(Tx, icase);
+        if(!isNaN(sgv)) {
+            phi_integrand += (1 - x**2)**(2*Sn) * sgv * x * dx;  // 使用已定义的dx
+        }
+    }
+    const Phi = fsig * 2 * phi_integrand;
+
+    // 反应参数
+    let Z1, Z2, A1, A2, fion, Y, M, delta12, x1, x2, strcase;
+    switch(icase) {
+        case 1: // D-T
+            [Z1,Z2,A1,A2,fion,Y,delta12,x1,x2,strcase] = [1,1,2,3, 0.2, 17.59e6*qe, 0, f1, 1-f1, 'D-T']; 
+            break;
+        case 2: // D-D
+            [Z1,Z2,A1,A2,fion,Y,delta12,x1,x2,strcase] = [1,1,2,2, (3.27/4+4.04)/(3.27+4.04), 0.5*(3.27+4.04)*1e6*qe, 1, 1, 1, 'D-D'];  // 修正：使用与MATLAB一致的fion和Y计算 
+            break;
+        case 3: // D-He3
+            [Z1,Z2,A1,A2,fion,Y,delta12,x1,x2,strcase] = [1,2,2,3, 1.0, 18.35e6*qe, 0, f1, 1-f1, 'D-He3']; 
+            break;
+        case 4: // p-B11 Nevins
+        case 5: // p-B11 Sikora
+            [Z1,Z2,A1,A2,fion,Y,delta12,x1,x2,strcase] = [1,5,1,11, 1.0, 8.68e6*qe, 0, f1, 1-f1, icase===4 ? 'pB-Nevins' : 'pB-Sikora'];
+            break;
+        case 6: // D-D (cat) - 按照MATLAB代码中的case 6处理
+            [Z1,Z2,A1,A2,fion,Y,delta12,x1,x2,strcase] = [1,1,2,2, 26.73/43.25, 0.5*43.25*1e6*qe, 1, 1, 1, 'D-D(cat)']; 
+            break;
+        default: 
+            return {};
+    }
+    
+    M = (x1*A1 + x2*A2) / (1 + delta12);
+    const n10 = x1 * n120; 
+    const n20 = x2 * n120; 
+    const nHe0 = fHe * ni0; 
+    const nimp0 = fimp * ni0;
+    const ne0 = (n10*Z1 + n20*Z2)/(1+delta12) + nHe0*2 + nimp0*Zimp;
+    const Zeff = ((n10*Z1**2 + n20*Z2**2)/(1+delta12) + nHe0*2**2 + nimp0*Zimp**2) / ne0;
+    
+    // 聚变功率
+    const Pfus = Y / (1+delta12) * n10 * n20 * Phi * Vp * 1e-6;
+    const Pn = Pfus * (1 - fion);
+    
+    // 轫致辐射功率
+    const term1 = Zeff * (1/(1+2*Sn+0.5*ST));
+    const term2 = 0.7936/(1+2*Sn+1.5*ST)*(Te0/mec2);
+    const term3 = 1.874/(1+2*Sn+2.5*ST)*(Te0/mec2)**2;
+    const term4_relativistic = 3/Math.sqrt(2)/(1+2*Sn+1.5*ST)*(Te0/mec2);
+    const Pbrem = 5.34e-37*ne0**2*Math.sqrt(Te0)*(term1+term2+term3+term4_relativistic)*1e-6*Vp;
+
+    // 回旋辐射功率
+    const neff = ne0 / 1e20 / (1+Sn);  // 修正：添加除以1e20的步骤，与MATLAB一致
+    const aeff = a * Math.sqrt(kappa); 
+    // 修正：与MATLAB一致的有效温度计算 Teff=Te0*nansum((1-x.^2).^ST)*dx
+    let Teff_integral = 0;
+    x_grid.forEach(x => {
+        Teff_integral += (1-x**2)**ST * dx;  // 使用已定义的dx
+    });
+    const Teff = Te0 * Teff_integral;
+    const Pcycl = 4.14e-7 * (neff/1e0)**0.5 * Teff**2.5 * BT0**2.5 * (1-Rw)**0.5 * aeff**-0.5 * (1+2.5*Teff/511) * Vp * 1e0;  // 修正：使用1e0而非1e20，并添加1e0系数，与MATLAB一致
+
+    // 能量约束
+    const Eth = 1.5*(ni0*Ti0 + ne0*Te0)*1e3*qe/(1+Sn+ST)*Vp * 1e-6;
+    const Pth = Eth / tauE; // MW（虽然MATLAB注释说是W，但实际应该是MW：Eth[MJ]/tauE[s]=MW）
+    
+    // 加热功率和增益因子
+    const Pheat = Pcycl + Pbrem + Pth - fion*Pfus;
+    let Qfus = (Pheat > 0) ? Pfus / Pheat : 1000;
+    if (Qfus <= 0 || Qfus > 1000) Qfus = 1000;
+
+    // β参数
+    const betaT = 2*mu0*(ni0*Ti0 + ne0*Te0)*1e3*qe / (BT0**2) / (1+Sn+ST);
+    const betaN = 100 * betaT / (Ip / (a * BT0));
+    
+    // 密度相关参数
+    const nbar = ne0 * Math.sqrt(Math.PI)/2 * gamma(Sn+1)/gamma(Sn+1.5);
+    const nGw = 1e20 * Ip / (Math.PI * a**2);
+    const nbar_o_nGw = nbar / nGw;
+    
+    // 约束标度律
+    const PLx = fion * Pfus + Pheat;
+    const tauEIPB98x = (PLx > 0) ? 0.145*(Ip**0.93*R0**1.39*a**0.58*kappa**0.78*(nbar/1e20)**0.41*BT0**0.15*M**0.19)/PLx**0.69 : Infinity;
+    const H98 = tauE / tauEIPB98x;
+    const tauESTx = (PLx > 0) ? 0.066*(Ip**0.53*BT0**1.05*(nbar/1e19)**0.65*R0**2.66*kappa**0.78)/PLx**0.58 : Infinity;
+    const HST = tauE / tauESTx;
+    
+    // 其他参数
+    const q = 5*BT0*a**2*kappa/(R0*Ip);
+    const Pwall = (Pfus + Pheat) / Sw;  // 修正：使用Sw而不是Sp，与MATLAB一致
+    const betap = (25/betaT)*((1+kappa**2)/2)*(betaN/100)**2;
+
+    return {
+        Eth, H98, HST, Pheat, Pn, Pfus, Pwall, Qfus, betaN, betaT, nbar_o_nGw, q, 
+        Pbrem, Pcycl, Vp, betap, Sp, ne0, M, fTavg, fnavg, strcase, Pth, Zeff, Sw  // 修正：添加Sw返回值
+    };
+}
+
+// ========== 参数定义和预设场景 ==========
+const paramDefs = [
+    {id:'R0', label_zh:'R₀ (主半径) [m]', label_en:'R0 [m]', step:0.01, precision:3},
+    {id:'A', label_zh:'A (长宽比)', label_en:'A', step:0.01, precision:3},
+    {id:'kappa', label_zh:'κ (伸长率)', label_en:'kappa', step:0.01, precision:3},
+    {id:'delta', label_zh:'δ (三角性)', label_en:'delta', step:0.01, precision:3},
+    {id:'Sn', label_zh:'Sₙ (密度剖面指数)', label_en:'Sn', step:0.01, precision:3},
+    {id:'ST', label_zh:'Sₜ (温度剖面指数)', label_en:'ST', step:0.01, precision:3},
+    {id:'ni0', label_zh:'nᵢ₀ (中心离子密度) [10²⁰ m⁻³]', label_en:'ni0 [10^20 m^-3]', step:0.01, precision:3},
+    {id:'Ti0', label_zh:'Tᵢ₀ (中心离子温度) [keV]', label_en:'Ti0 [keV]', step:0.1, precision:1},
+    {id:'BT0', label_zh:'Bₜ₀ (轴向磁场) [T]', label_en:'BT0 [T]', step:0.01, precision:3},
+    {id:'Ip', label_zh:'Iₚ (等离子体电流) [MA]', label_en:'Ip [MA]', step:0.01, precision:3},
+    {id:'tauE', label_zh:'τE (能量约束时间) [s]', label_en:'tauE [s]', step:0.01, precision:3},
+    {id:'fHe', label_zh:'f₋He (氦分数)', label_en:'fHe', step:0.001, precision:3},
+    {id:'fimp', label_zh:'f₋imp (杂质分数)', label_en:'fimp', step:0.001, precision:3},
+    {id:'Zimp', label_zh:'Z₋imp (杂质电荷)', label_en:'Zimp', step:1, precision:0},
+    {id:'Rw', label_zh:'Rw (壁反射率)', label_en:'Rw', step:0.01, precision:3},
+    {id:'g', label_zh:'g (等离子体-壁间隙) [m]', label_en:'g [m]', step:0.001, precision:3},
+    {id:'fT', label_zh:'fₜ (Te0/Ti0)', label_en:'fT', step:0.01, precision:3},
+    {id:'fsig', label_zh:'f₋sig (反应截面修正)', label_en:'fsig', step:0.01, precision:3},
+    {id:'f1', label_zh:'f₁ (第一燃料离子分数)', label_en:'f1', step:0.01, precision:3}
+];
+
+const presets = {
+    'EHL-2': {
+        icase: 1, R0: 1.05, A: 1.85, kappa: 2.2, delta: 0.5, Sn: 0.4, ST: 0.8,
+        ni0: 1.3, Ti0: 30, BT0: 3.0, Ip: 3.0, tauE: 0.5,
+        fHe: 0.02, fimp: 0.01, Zimp: 10, Rw: 0.95, g: 0.0,
+        fT: 1/3, fsig: 1.0, f1: 0.5
+    },
+    'EHL-3A': {
+        icase: 4, R0: 2.0, A: 1.8, kappa: 2.5, delta: 0.6, Sn: 2.0, ST: 2.0,
+        ni0: 1.5, Ti0: 70, BT0: 4.0, Ip: 10, tauE: 5,
+        fHe: 0.0, fimp: 0.0, Zimp: 10, Rw: 0.95, g: 0.0,
+        fT: 1/3, fsig: 1.0, f1: 0.9
+    },
+    'EHL-3B': {
+        icase: 5, R0: 3.2, A: 1.7, kappa: 2.5, delta: 0.6, Sn: 2.0, ST: 2.0,
+        ni0: 2.5, Ti0: 140, BT0: 4.0, Ip: 25, tauE: 25,
+        fHe: 0.0, fimp: 0.0, Zimp: 10, Rw: 0.95, g: 0.0,
+        fT: 0.25, fsig: 2.0, f1: 0.9
+    },
+    'pB reactor': {
+        icase: 5, R0: 4, A: 1.7, kappa: 2.5, delta: 0.6, Sn: 2.0, ST: 2.0,
+        ni0: 2.0, Ti0: 250, BT0: 6.0, Ip: 30, tauE: 45,
+        fHe: 0.0, fimp: 0.0, Zimp: 10, Rw: 0.95, g: 0.0,
+        fT: 0.25, fsig: 1.0, f1: 0.9
+    },
+    'ITER': {
+        icase: 1, R0: 6.35, A: 3.43, kappa: 1.86, delta: 0.5, Sn: 0.5, ST: 1.0,
+        ni0: 0.681, Ti0: 25, BT0: 5.18, Ip: 9.2, tauE: 2.0,
+        fHe: 0.04, fimp: 0.01, Zimp: 10, Rw: 0.7, g: 0.05,
+        fT: 1.0, fsig: 1.0, f1: 0.5
+    },
+};
+
+const icaseMap = {
+    1: 'D-T', 
+    2: 'D-D', 
+    3: 'D-He3', 
+    4: 'p-B11 (Nevins)', 
+    5: 'p-B11 (Sikora)',
+    6: 'D-D (cat)'
+};
+
+// ========== 参数分组定义 ==========
+// 几何参数
+const geometryParams = [
+    {id:'R0', label_zh:'R₀ [m]', label_en:'R₀', step:0.01, precision:3, tooltip_zh:'大半径', tooltip_en:'Major radius'},
+    {id:'A', label_zh:'A', label_en:'A', step:0.01, precision:3, tooltip_zh:'环径比 (A=R₀/a₀)', tooltip_en:'Aspect ratio (A=R₀/a₀)'},
+    {id:'BT0', label_zh:'B₀ [T]', label_en:'B₀', step:0.01, precision:3, tooltip_zh:'等离子体芯部磁场', tooltip_en:'Core magnetic field'},
+    {id:'g', label_zh:'g [m]', label_en:'g', step:0.001, precision:3, tooltip_zh:'等离子体边界与真空室壁距离因子', tooltip_en:'Distance factor between plasma boundary and vacuum chamber wall'},
+    {id:'delta', label_zh:'δ', label_en:'δ', step:0.01, precision:3, tooltip_zh:'三角形变', tooltip_en:'Triangularity'},
+    {id:'kappa', label_zh:'κ', label_en:'κ', step:0.01, precision:3, tooltip_zh:'拉长比', tooltip_en:'Elongation ratio'}
+];
+    
+// 等离子参数
+const plasmaParams = [
+    {id:'Sn', label_zh:'Sₙ', label_en:'Sₙ', step:0.01, precision:3, tooltip_zh:'密度剖面因子', tooltip_en:'Density profile factor'},
+    {id:'ST', label_zh:'Sₜ', label_en:'Sₜ', step:0.01, precision:3, tooltip_zh:'温度剖面因子', tooltip_en:'Temperature profile factor'},
+    {id:'ni0', label_zh:'nᵢ₀ [10²⁰]', label_en:'nᵢ₀', step:0.01, precision:3, tooltip_zh:'芯部电子密度', tooltip_en:'Core electron density'},
+    {id:'Ti0', label_zh:'Tᵢ₀ [keV]', label_en:'Tᵢ₀', step:0.1, precision:1, tooltip_zh:'芯部电子温度', tooltip_en:'Core electron temperature'},
+    {id:'Ip', label_zh:'Iₚ [MA]', label_en:'Iₚ', step:0.01, precision:3, tooltip_zh:'等离子体电流', tooltip_en:'Plasma current'},
+    {id:'tauE', label_zh:'τE [s]', label_en:'τE', step:0.01, precision:3, tooltip_zh:'能量约束时间', tooltip_en:'Energy confinement time'}
+];
+
+// 其他参数
+const otherParams = [
+    {id:'Rw', label_zh:'Rw', label_en:'Rw', step:0.01, precision:3, tooltip_zh:'回旋辐射壁反射系数', tooltip_en:'Cyclotron radiation wall reflection coefficient'},
+    {id:'f1', label_zh:'f₁', label_en:'f₁', step:0.01, precision:3, tooltip_zh:'等离子体成分比例', tooltip_en:'Plasma composition ratio'},
+    {id:'fHe', label_zh:'f₋He', label_en:'f₋He', step:0.001, precision:3, tooltip_zh:'He粒子浓度', tooltip_en:'He particle concentration'},
+    {id:'fimp', label_zh:'f₋imp', label_en:'f₋imp', step:0.001, precision:3, tooltip_zh:'杂质浓度', tooltip_en:'Impurity concentration'},
+    {id:'Zimp', label_zh:'Z₋imp', label_en:'Z₋imp', step:1, precision:0, tooltip_zh:'杂质电荷数', tooltip_en:'Impurity charge number'},
+    {id:'fsig', label_zh:'fσ', label_en:'fσ', step:0.01, precision:3, tooltip_zh:'反应率提升因子', tooltip_en:'Reaction rate enhancement factor'},
+    {id:'fT', label_zh:'fₜ', label_en:'fₜ', step:0.01, precision:3, tooltip_zh:'热离子模因子', tooltip_en:'Hot ion mode factor'}
+];
+
+// ========== 国际化文本 ==========
+const translations = {
+    zh: {
+        title: '新奥托卡马克系统程序 (v1.0)',
+        inputParams: '输入参数与场景',
+        geometryParams: '几何参数',
+        plasmaParams: '等离子参数',
+        otherParams: '其他参数',
+        presetScenario: '预设场景',
+        fusionReaction: '聚变反应类型',
+        scanOptions: '参数扫描选项',
+        plotAndControl: '绘图选项与控制',
+        xAxis: 'X轴',
+        yAxis: 'Y轴',
+        xRange: 'X范围',
+        yRange: 'Y范围',
+        xStartTooltip: 'X轴扫描起始值',
+        xEndTooltip: 'X轴扫描结束值',
+        xStepsTooltip: 'X轴扫描网格点数（影响计算精度和最佳区域标记密度）',
+        yStartTooltip: 'Y轴扫描起始值',
+        yEndTooltip: 'Y轴扫描结束值',
+        yStepsTooltip: 'Y轴扫描网格点数（影响计算精度和最佳区域标记密度）',
+        singlePoint: '单点计算',
+        twoDScan: '二维扫描',
+        results: '计算结果',
+        detailedResults: '详细结果',
+        contourPlot: '等高线图',
+        crossSection: '剖面图',
+        calculating: '计算中...',
+        scanning: '扫描中...',
+        clickToCalculate: '请点击"单点计算"或"二维扫描"以查看结果。',
+        collapse: '收起',
+        plotOptions: '绘图选项',
+        plotQuantities: '绘制物理量',
+        bestRegionSettings: '最佳区域设置',
+        PheatmaxLabel: 'Pheat上限 [MW]',
+        PfusminLabel: 'Pfus下限 [MW]',
+        QminLabel: 'Q下限',
+        n0maxLabel: 'n/nGw上限',
+        saveParams: '保存数据',
+        loadParams: '加载数据',
+        saveSuccess: '数据保存成功',
+        loadSuccess: '参数加载成功',
+        loadError: '参数加载失败',
+        saveError: '数据保存失败',
+        invalidFile: '无效的文件格式',
+        help: '帮助',
+        helpTitle: '程序信息',
+        helpNote: '注：计算公式有一定简化，可能与原始matlab版本有少量偏差。',
+        helpRefs: '参考文献：',
+        helpAuthors: '作者：',
+        helpDownload: '下载：',
+        helpClose: '关闭'
+    },
+    en: {
+        title: 'ENN tokamak system code (v1.0)',
+        inputParams: 'Input Parameters & Scenarios',
+        geometryParams: 'Geometry Parameters',
+        plasmaParams: 'Plasma Parameters',
+        otherParams: 'Other Parameters',
+        presetScenario: 'Preset Scenario',
+        fusionReaction: 'Fusion Reaction Type',
+        scanOptions: 'Parameter Scan Options',
+        plotAndControl: 'Plot Options & Control',
+        xAxis: 'X-Axis',
+        yAxis: 'Y-Axis',
+        xRange: 'X-Range',
+        yRange: 'Y-Range',
+        xStartTooltip: 'X-axis scan start value',
+        xEndTooltip: 'X-axis scan end value',
+        xStepsTooltip: 'Number of X-axis grid points (affects calculation precision and best region mark density)',
+        yStartTooltip: 'Y-axis scan start value',
+        yEndTooltip: 'Y-axis scan end value',
+        yStepsTooltip: 'Number of Y-axis grid points (affects calculation precision and best region mark density)',
+        singlePoint: 'Single Point',
+        twoDScan: '2D Scan',
+        results: 'Calculation Results',
+        detailedResults: 'Detailed Results',
+        contourPlot: 'Contour Plot',
+        crossSection: 'Cross Section',
+        calculating: 'Calculating...',
+        scanning: 'Scanning...',
+        clickToCalculate: 'Click "Single Point" or "2D Scan" to see results.',
+        collapse: 'Collapse',
+        plotOptions: 'Plot Options',
+        plotQuantities: 'Plot Quantities',
+        bestRegionSettings: 'Best Region Settings',
+        PheatmaxLabel: 'Pheat max [MW]',
+        PfusminLabel: 'Pfus min [MW]',
+        QminLabel: 'Q min',
+        n0maxLabel: 'n/nGw max',
+        saveParams: 'Save Data',
+        loadParams: 'Load Data',
+        saveSuccess: 'Data saved successfully',
+        loadSuccess: 'Parameters loaded successfully',
+        loadError: 'Failed to load parameters',
+        saveError: 'Failed to save data',
+        invalidFile: 'Invalid file format',
+        help: 'Help',
+        helpTitle: 'Program Information',
+        helpNote: 'Note: The calculation formulas are simplified and may have slight deviations from the original MATLAB version.',
+        helpRefs: 'References:',
+        helpAuthors: 'Authors:',
+        helpDownload: 'Download:',
+        helpClose: 'Close'
+    }
+};
+
+// ========== Vue应用 ==========
+const { createApp, ref, reactive, onMounted, watch } = Vue;
+const { ElButton, ElButtonGroup, ElCard, ElForm, ElFormItem, ElSelect, ElOption, ElInputNumber, ElRow, ElCol, ElTabs, ElTabPane, ElInput, ElAlert, ElCheckbox, ElCheckboxGroup, ElTooltip, ElDialog } = ElementPlus;
+
+const app = createApp({
+    setup() {
+        // 响应式数据
+        const lang = ref('en');
+        const activeTab = ref('detail');
+        const calculating = ref(false);
+        const scanning = ref(false);
+        const statusMessage = ref('');
+        const resultText = ref(translations.en.clickToCalculate);
+        const collapsedLeft = ref(false);
+        const showHelp = ref(false);
+        
+        // 参数数据
+        const params = reactive(presets['pB reactor']);
+
+        const selectedPreset = ref('pB reactor');
+        const scanX = ref('Ti0');
+        const scanY = ref('ni0');
+        const scanRange = reactive({
+            xStart: 10, xEnd: 300, xSteps: 20,
+            yStart: 0.5, yEnd: 5, ySteps: 20
+        });
+
+        // 绘图选项 - 根据MATLAB代码默认显示的物理量
+        const plotOptions = ref(['Pfus', 'nGw', 'Qfus', 'Pheat']);
+        
+        // Best region阈值参数
+        const bestRegionThresholds = reactive({
+            Pheatmax: 100.0,
+            Pfusmin: 10.0,
+            Qmin: 1.0,
+            n0max: 1.0
+        });
+        const plotQuantities = [
+            {id: 'Pheat', name: 'Pheat [MW]', tooltip_zh: '所需加热功率', tooltip_en: 'Required heating power'},
+            {id: 'Pfus', name: 'Pfus [MW]', tooltip_zh: '聚变功率', tooltip_en: 'Fusion power'},
+            {id: 'Pbrem', name: 'Pbrem [MW]', tooltip_zh: '（韧致）辐射功率', tooltip_en: 'Bremsstrahlung radiation power'},
+            {id: 'Eth', name: 'Eth [MJ]', tooltip_zh: '等离子体储能', tooltip_en: 'Plasma stored energy'},
+            {id: 'ne0', name: 'ne0 [10²⁰]', tooltip_zh: '电子密度', tooltip_en: 'Electron density'},
+            {id: 'Qfus', name: 'Qfus', tooltip_zh: '聚变增益因子 (Pfus/Pheat)', tooltip_en: 'Fusion gain factor (Pfus/Pheat)'},
+            {id: 'H98', name: 'H98', tooltip_zh: '能量约束时间因子①', tooltip_en: 'Energy confinement enhancement factor ①'},
+            {id: 'HST', name: 'HST', tooltip_zh: '能量约束时间因子②', tooltip_en: 'Energy confinement enhancement factor ②'},
+            {id: 'Vp', name: 'Vp [m³]', tooltip_zh: '等离子体体积', tooltip_en: 'Plasma volume'},
+            {id: 'betaT', name: 'βt (%)', tooltip_zh: '等离子体比压', tooltip_en: 'Plasma beta'},
+            {id: 'betaN', name: 'βN', tooltip_zh: '等离子体归一化比压', tooltip_en: 'Normalized plasma beta'},
+            {id: 'nGw', name: 'n/nGw', tooltip_zh: '密度极限', tooltip_en: 'Density limit'}
+        ];
+
+        // 方法
+        const t = (key) => translations[lang.value][key] || key;
+
+        const setLang = (newLang) => {
+            lang.value = newLang;
+            if (newLang === 'en') {
+                resultText.value = translations.en.clickToCalculate;
+            } else {
+                resultText.value = translations.zh.clickToCalculate;
+            }
+        };
+
+        const loadPreset = () => {
+            const preset = presets[selectedPreset.value];
+            Object.keys(preset).forEach(key => {
+                if (key in params) params[key] = preset[key];
+            });
+        };
+
+
+
+        const calculateSingle = async () => {
+            calculating.value = true;
+            statusMessage.value = t('calculating');
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            try {
+                const ni0_actual = params.ni0 * 1e20;
+                const res = funsc(
+                    params.R0, params.A, params.kappa, params.delta, params.Sn, params.ST,
+                    ni0_actual, params.Ti0, params.fT, params.fsig, params.f1,
+                    params.BT0, params.Ip, params.tauE, params.fHe, params.fimp, params.Zimp,
+                    params.Rw, params.g, params.icase
+                );
+                
+                // 格式化结果输出
+                let output = '';
+                if (lang.value === 'zh') {
+                    output = `POPCON计算结果 - 扫描轴: (${paramDefs.find(p => p.id === scanX.value)?.label_zh || scanX.value}, ${paramDefs.find(p => p.id === scanY.value)?.label_zh || scanY.value})\n`;
+                    output += `反应类型: icase=${params.icase} (${res.strcase}), nᵢ₀=${(ni0_actual/1e20).toExponential(2)} m⁻³, Tᵢ₀=${params.Ti0.toFixed(1)} keV\n`;
+                    output += `几何参数: R₀=${params.R0}m, A=${params.A}, κ=${params.kappa}, δ=${params.delta}, Bₜ₀=${params.BT0}T, Iₚ=${params.Ip}MA\n`;
+                    output += `约束参数: τE=${params.tauE}s, Sₙ=${params.Sn}, Sₜ=${params.ST}, fTavg=${res.fTavg.toFixed(2)}, fnavg=${res.fnavg.toFixed(2)}\n`;
+                    output += `燃料参数: fₜ=${params.fT.toFixed(3)}, f₋sig=${params.fsig.toFixed(3)}, f₁=${params.f1.toFixed(3)}\n`;
+                    output += `杂质参数: fHe=${params.fHe.toFixed(2)}, fimp=${params.fimp.toFixed(2)}, Zimp=${params.Zimp}, Zeff=${res.Zeff.toFixed(2)}\n`;
+                    output += `壁条件: Rw=${params.Rw}, g=${params.g}m\n\n`;
+                    output += `===== 主要结果 =====\n`;
+                    output += `功率平衡: Pheat=${res.Pheat.toFixed(3)}MW, Pfus=${res.Pfus.toFixed(3)}MW, Pn=${res.Pn.toFixed(3)}MW\n`;
+                    output += `功率分解: Pbrem=${res.Pbrem.toFixed(3)}MW, Pcycl=${res.Pcycl.toFixed(3)}MW, Pth=${res.Pth.toFixed(3)}MW\n`;
+                    output += `性能指标: Qfus=${res.Qfus.toFixed(2)}, H98=${res.H98.toFixed(3)}, HST=${res.HST.toFixed(3)}\n`;
+                    output += `β参数: βN=${res.betaN.toFixed(3)}, βp=${res.betap.toFixed(3)}, βt=${(res.betaT*100).toFixed(2)}%\n`;
+                    output += `几何量: Vp=${res.Vp.toFixed(3)}m³, Sp=${res.Sp.toFixed(3)}m², Eth=${res.Eth.toFixed(3)}MJ\n`;
+                    output += `密度比: n_avg/n_Gw=${res.nbar_o_nGw.toFixed(2)}, ne0=${(res.ne0/1e20).toFixed(3)}×10²⁰m⁻³\n`;
+                    output += `其他: q=${res.q.toFixed(3)}, M=${res.M.toFixed(2)}, Pwall=${res.Pwall.toFixed(3)}MW/m²`;
+                } else {
+                    output = `POPCON Results - Scan axes: (${paramDefs.find(p => p.id === scanX.value)?.label_en || scanX.value}, ${paramDefs.find(p => p.id === scanY.value)?.label_en || scanY.value})\n`;
+                    output += `Reaction: icase=${params.icase} (${res.strcase}), nᵢ₀=${(ni0_actual/1e20).toExponential(2)} m⁻³, Tᵢ₀=${params.Ti0.toFixed(1)} keV\n`;
+                    output += `Geometry: R₀=${params.R0}m, A=${params.A}, κ=${params.kappa}, δ=${params.delta}, Bₜ₀=${params.BT0}T, Iₚ=${params.Ip}MA\n`;
+                    output += `Confinement: τE=${params.tauE}s, Sₙ=${params.Sn}, Sₜ=${params.ST}, fTavg=${res.fTavg.toFixed(2)}, fnavg=${res.fnavg.toFixed(2)}\n`;
+                    output += `Fuel params: fₜ=${params.fT.toFixed(3)}, f_sig=${params.fsig.toFixed(3)}, f₁=${params.f1.toFixed(3)}\n`;
+                    output += `Impurities: fHe=${params.fHe.toFixed(2)}, fimp=${params.fimp.toFixed(2)}, Zimp=${params.Zimp}, Zeff=${res.Zeff.toFixed(2)}\n`;
+                    output += `Wall: Rw=${params.Rw}, g=${params.g}m\n\n`;
+                    output += `===== RESULTS =====\n`;
+                    output += `Power balance: Pheat=${res.Pheat.toFixed(3)}MW, Pfus=${res.Pfus.toFixed(3)}MW, Pn=${res.Pn.toFixed(3)}MW\n`;
+                    output += `Power breakdown: Pbrem=${res.Pbrem.toFixed(3)}MW, Pcycl=${res.Pcycl.toFixed(3)}MW, Pth=${res.Pth.toFixed(3)}MW\n`;
+                    output += `Performance: Qfus=${res.Qfus.toFixed(2)}, H98=${res.H98.toFixed(3)}, HST=${res.HST.toFixed(3)}\n`;
+                    output += `Beta params: βN=${res.betaN.toFixed(3)}, βp=${res.betap.toFixed(3)}, βt=${(res.betaT*100).toFixed(2)}%\n`;
+                    output += `Geometry: Vp=${res.Vp.toFixed(3)}m³, Sp=${res.Sp.toFixed(3)}m², Eth=${res.Eth.toFixed(3)}MJ\n`;
+                    output += `Density: n_avg/n_Gw=${res.nbar_o_nGw.toFixed(2)}, ne0=${(res.ne0/1e20).toFixed(3)}×10²⁰m⁻³\n`;
+                    output += `Others: q=${res.q.toFixed(3)}, M=${res.M.toFixed(2)}, Pwall=${res.Pwall.toFixed(3)}MW/m²`;
+                }
+                
+                resultText.value = output;
+                statusMessage.value = '';
+            } catch (error) {
+                resultText.value = `计算错误: ${error.message}`;
+                statusMessage.value = '';
+            } finally {
+                calculating.value = false;
+            }
+            
+            // 同时更新剖面图
+            plotCrossSection();
+            // 更新等离子体剖面图
+            plotPlasmaProfiles();
+        };
+
+        // 绘制密度剖面图
+        const plotDensityProfile = () => {
+            const Sn = params.Sn;
+            
+            // 生成归一化半径数组 x = r/a，范围0到1
+            const x = linspace(0, 1, 101);
+            
+            // 计算密度剖面 n(x)/n(0) = (1-x²)^Sn
+            const densityProfile = x.map(xi => Math.pow(1 - xi**2, Sn));
+            
+            const plotData = [{
+                x: x,
+                y: densityProfile,
+                type: 'scatter',
+                mode: 'lines',
+                line: {color: 'blue', width: 3},
+                name: lang.value === 'zh' ? `密度剖面` : `Density Profile`,
+                hovertemplate: 'x=%{x:.3f}<br>n(x)/n(0)=%{y:.3f}<extra></extra>'
+            }];
+            
+            const layout = {
+                title: {
+                    text: lang.value === 'zh' ? `密度剖面 (Sₙ=${Sn})` : `Density Profile (Sₙ=${Sn})`,
+                    font: {size: 12}
+                },
+                xaxis: {
+                    title: {
+                        text: 'x=r/a',
+                        font: {size: 10}
+                    },
+                    range: [0, 1],
+                    tickfont: {size: 9}
+                },
+                yaxis: {
+                    title: {
+                        text: 'n(x)/n(0)',
+                        font: {size: 10}
+                    },
+                    tickfont: {size: 9},
+                    range: [0, 1.05]
+                },
+                showlegend: false,
+                autosize: true,
+                font: {size: 10},
+                margin: {r: 20, l: 50, t: 40, b: 40},
+                plot_bgcolor: 'rgba(240,240,240,0.3)'
+            };
+            
+            const config = {
+                responsive: true,
+                displayModeBar: false,
+                displaylogo: false
+            };
+            
+            // 获取容器尺寸
+            const densityContainer = document.getElementById('density-profile-container');
+            const containerWidth = densityContainer.offsetWidth || 300;
+            const containerHeight = densityContainer.offsetHeight || 200;
+            
+            layout.width = containerWidth;
+            layout.height = containerHeight;
+            
+            Plotly.newPlot('density-profile-container', plotData, layout, config);
+        };
+
+        // 绘制温度剖面图
+        const plotTemperatureProfile = () => {
+            const ST = params.ST;
+            
+            // 生成归一化半径数组 x = r/a，范围0到1
+            const x = linspace(0, 1, 101);
+            
+            // 计算温度剖面 T(x)/T(0) = (1-x²)^ST
+            const temperatureProfile = x.map(xi => Math.pow(1 - xi**2, ST));
+            
+            const plotData = [{
+                x: x,
+                y: temperatureProfile,
+                type: 'scatter',
+                mode: 'lines',
+                line: {color: 'red', width: 3},
+                name: lang.value === 'zh' ? `温度剖面` : `Temperature Profile`,
+                hovertemplate: 'x=%{x:.3f}<br>T(x)/T(0)=%{y:.3f}<extra></extra>'
+            }];
+            
+            const layout = {
+                title: {
+                    text: lang.value === 'zh' ? `温度剖面 (Sₜ=${ST})` : `Temperature Profile (Sₜ=${ST})`,
+                    font: {size: 12}
+                },
+                xaxis: {
+                    title: {
+                        text: lang.value === 'zh' ? 
+                            'x=r/a<br><span style="font-size: 9px;">0表示: R₀ (磁轴), 1表示: Rₘₐₓ (等离子体边界)</span>' :
+                            'x=r/a<br><span style="font-size: 9px;">0: R₀ (magnetic axis), 1: Rₘₐₓ (plasma boundary)</span>',
+                        font: {size: 10}
+                    },
+                    range: [0, 1],
+                    tickfont: {size: 9}
+                },
+                yaxis: {
+                    title: {
+                        text: 'T(x)/T(0)',
+                        font: {size: 10}
+                    },
+                    tickfont: {size: 9},
+                    range: [0, 1.05]
+                },
+                showlegend: false,
+                autosize: true,
+                font: {size: 10},
+                margin: {r: 20, l: 50, t: 40, b: 60},
+                plot_bgcolor: 'rgba(240,240,240,0.3)'
+            };
+            
+            const config = {
+                responsive: true,
+                displayModeBar: false,
+                displaylogo: false
+            };
+            
+            // 获取容器尺寸
+            const temperatureContainer = document.getElementById('temperature-profile-container');
+            const containerWidth = temperatureContainer.offsetWidth || 300;
+            const containerHeight = temperatureContainer.offsetHeight || 200;
+            
+            layout.width = containerWidth;
+            layout.height = containerHeight;
+            
+            Plotly.newPlot('temperature-profile-container', plotData, layout, config);
+        };
+
+        // 绘制等离子体剖面图（组合函数）
+        const plotPlasmaProfiles = () => {
+            plotDensityProfile();
+            plotTemperatureProfile();
+        };
+
+        // 绘制托卡马克剖面图 - 根据MATLAB代码PlotShapeButtonPushed函数
+        const plotCrossSection = () => {
+            const R0 = params.R0;
+            const A = params.A;
+            const kappa = params.kappa;
+            const delta = params.delta;
+            const g = params.g;
+            const a = R0 / A;
+            
+            // 生成径向网格 - 对应MATLAB代码 rr=[(0.2:0.2:1.0)*a,a+g]
+            const rr = [];
+            for (let i = 0.2; i <= 1.0; i += 0.2) {
+                rr.push(i * a);
+            }
+            
+            // 确保壁边界与等离子体边界有足够的间隙以便可视化
+            const minGap = 0.01; // 最小间隙1cm
+            const effectiveG = Math.max(g, minGap);
+            rr.push(a + effectiveG);
+            
+            // 调试信息：确认径向网格
+            console.log(`Cross-section radial grid: a=${a.toFixed(3)}m, g=${g}m, effective_g=${effectiveG.toFixed(3)}m`);
+            console.log(`rr array:`, rr.map(r => r.toFixed(3)));
+            console.log(`Plasma boundary at r=${rr[rr.length-2].toFixed(3)}m, Wall at r=${rr[rr.length-1].toFixed(3)}m`);
+            
+            const plotData = [];
+            
+            // 对每个径向位置绘制等离子体边界
+            rr.forEach((r, jr) => {
+                // 角度网格 - 对应MATLAB代码 tt1=0.5*pi:0.002:1.502*pi
+                const tt1 = [];
+                for (let t = 0.5 * Math.PI; t <= 1.502 * Math.PI; t += 0.002) {
+                    tt1.push(t);
+                }
+                
+                // 计算内边界 R1, Z1
+                const R1 = [], Z1 = [];
+                tt1.forEach(t => {
+                    R1.push(r * (1 - delta) * Math.cos(t) + R0 - delta * r);
+                    Z1.push(r * (1 - delta) * Math.sin(t) * (kappa / (1 - delta)));
+                });
+                
+                // 角度网格 - 对应MATLAB代码 tt2=1.5*pi:0.002:2.502*pi
+                const tt2 = [];
+                for (let t = 1.5 * Math.PI; t <= 2.502 * Math.PI; t += 0.002) {
+                    tt2.push(t);
+                }
+                
+                // 计算外边界 R2, Z2
+                const R2 = [], Z2 = [];
+                tt2.forEach(t => {
+                    R2.push(r * (1 + delta) * Math.cos(t) + R0 - delta * r);
+                    Z2.push(r * (1 + delta) * Math.sin(t) * (kappa / (1 + delta)));
+                });
+                
+                // 合并R和Z数组
+                const R = [...R1, ...R2];
+                const Z = [...Z1, ...Z2];
+                
+                // 根据MATLAB代码设置线型和颜色
+                let lineColor, lineWidth, lineDash;
+                if (jr === rr.length - 1) {
+                    // 最外层 (等离子体-壁间隙): 品红色，线宽4
+                    lineColor = 'magenta';
+                    lineWidth = 4;
+                    lineDash = 'solid';
+                    console.log(`Drawing Wall boundary at r=${r.toFixed(3)}m`);
+                } else if (jr === rr.length - 2) {
+                    // 等离子体边界: 青色实线，线宽3，填充
+                    lineColor = 'cyan';
+                    lineWidth = 3;
+                    lineDash = 'solid';
+                    console.log(`Drawing Plasma boundary at r=${r.toFixed(3)}m (SOLID cyan line)`);
+                } else {
+                    // 内部磁面: 青色虚线，线宽2
+                    lineColor = 'cyan';
+                    lineWidth = 2;
+                    lineDash = 'dash';
+                    console.log(`Drawing Flux surface ${jr + 1} at r=${r.toFixed(3)}m (dashed cyan line)`);
+                }
+                
+                plotData.push({
+                    x: R,
+                    y: Z,
+                    type: 'scatter',
+                    mode: 'lines',
+                    line: {
+                        color: lineColor,
+                        width: lineWidth,
+                        dash: lineDash
+                    },
+                    name: jr === rr.length - 1 ? 
+                          (lang.value === 'zh' ? '壁面 (a+g)' : 'Wall (a+g)') : 
+                          jr === rr.length - 2 ? 
+                          (lang.value === 'zh' ? '等离子体边界 (a)' : 'Plasma boundary (a)') : 
+                          (lang.value === 'zh' ? `磁面 ${jr + 1}` : `Flux surface ${jr + 1}`),
+                    showlegend: jr === rr.length - 1 || jr === rr.length - 2,
+                    hoverinfo: 'skip'
+                });
+                
+                // 为等离子体边界添加填充
+                if (jr === rr.length - 2) {
+                    plotData.push({
+                        x: R,
+                        y: Z,
+                        type: 'scatter',
+                        mode: 'lines',
+                        fill: 'tonexty',
+                        fillcolor: 'rgba(0, 255, 255, 0.05)', // 浅青色填充
+                        line: {color: 'transparent'},
+                        name: lang.value === 'zh' ? '等离子体区域' : 'Plasma region',
+                        showlegend: false,
+                        hoverinfo: 'skip'
+                    });
+                }
+            });
+            
+            // 添加几何参数标注
+            // 使用已定义的 a = R0 / A
+            
+            // 1. 标注主半径 R0 (从原点到磁轴的水平线)
+            plotData.push({
+                x: [0, R0],
+                y: [0, 0],
+                type: 'scatter',
+                mode: 'lines+markers+text',
+                line: {color: 'red', width: 2, dash: 'dot'},
+                marker: {color: 'red', size: 4},
+                text: ['', `R₀=${R0}m`],
+                textposition: 'top center',
+                textfont: {color: 'red', size: 10},
+                name: lang.value === 'zh' ? 'R₀ (主半径)' : 'R₀ (Major radius)',
+                showlegend: true,
+                hoverinfo: 'skip'
+            });
+            
+            // 2. 标注小半径 a (从磁轴到等离子体边界的水平线)
+            plotData.push({
+                x: [R0, R0 + a],
+                y: [0, 0],
+                type: 'scatter',
+                mode: 'lines+markers+text',
+                line: {color: 'orange', width: 2, dash: 'dot'},
+                marker: {color: 'orange', size: 4},
+                text: ['', `a=${a.toFixed(2)}m`],
+                textposition: 'bottom center',
+                textfont: {color: 'orange', size: 10},
+                name: lang.value === 'zh' ? 'a (小半径)' : 'a (Minor radius)',
+                showlegend: true,
+                hoverinfo: 'skip'
+            });
+            
+            // 3. 标注伸长率 κ (从磁轴到上边界的垂直线)
+            const z_top = a * kappa;
+            const R_top = R0 - delta * a;  // 考虑三角性的影响，最上顶点的R坐标
+            plotData.push({
+                x: [R0, R0],
+                y: [0, z_top],
+                type: 'scatter',
+                mode: 'lines+markers+text',
+                line: {color: 'green', width: 2, dash: 'dot'},
+                marker: {color: 'green', size: 4},
+                text: ['', `κa=${z_top.toFixed(2)}m`],
+                textposition: 'middle right',
+                textfont: {color: 'green', size: 10},
+                name: lang.value === 'zh' ? 'κ (伸长率)' : 'κ (Elongation)',
+                showlegend: true,
+                hoverinfo: 'skip'
+            });
+            
+            // 3b. 辅助线：从磁轴到等离子体边界最上顶点的水平线
+            plotData.push({
+                x: [R0, R_top],
+                y: [z_top, z_top],
+                type: 'scatter',
+                mode: 'lines',
+                line: {color: 'green', width: 1, dash: 'dot'},
+                name: 'κ auxiliary lines',
+                showlegend: false,
+                hoverinfo: 'skip'
+            });
+            
+            // 3c. 辅助线：从等离子体边界最上顶点到z=0的垂直虚线
+            plotData.push({
+                x: [R_top, R_top],
+                y: [z_top, 0],
+                type: 'scatter',
+                mode: 'lines',
+                line: {color: 'green', width: 1, dash: 'dot'},
+                showlegend: false,
+                hoverinfo: 'skip'
+            });
+            
+            // 3d. 辅助线：从磁轴到等离子体边界最上顶点在R方向的投影
+            plotData.push({
+                x: [R0, R_top],
+                y: [0, 0],
+                type: 'scatter',
+                mode: 'lines',
+                line: {color: 'green', width: 1, dash: 'dot'},
+                showlegend: false,
+                hoverinfo: 'skip'
+            });
+            
+            // 4. 标注三角性 δ (显示偏移量)
+            const delta_offset = delta * a;
+            plotData.push({
+                x: [R0 - delta_offset, R0],
+                y: [z_top * 0.7, z_top * 0.7],
+                type: 'scatter',
+                mode: 'lines+markers+text',
+                line: {color: 'purple', width: 2, dash: 'dot'},
+                marker: {color: 'purple', size: 4},
+                text: ['', `δa=${delta_offset.toFixed(3)}m`],
+                textposition: 'top center',
+                textfont: {color: 'purple', size: 10},
+                name: lang.value === 'zh' ? 'δ (三角性)' : 'δ (Triangularity)',
+                showlegend: true,
+                hoverinfo: 'skip'
+            });
+            
+            // 5. 添加坐标轴原点标记
+            plotData.push({
+                x: [0],
+                y: [0],
+                type: 'scatter',
+                mode: 'markers+text',
+                marker: {color: 'black', size: 8, symbol: 'cross'},
+                text: [lang.value === 'zh' ? '原点' : 'Origin'],
+                textposition: 'bottom right',
+                textfont: {color: 'black', size: 9},
+                name: lang.value === 'zh' ? '原点' : 'Origin',
+                showlegend: false,
+                hoverinfo: 'skip'
+            });
+            
+            // 6. 添加磁轴标记
+            plotData.push({
+                x: [R0],
+                y: [0],
+                type: 'scatter',
+                mode: 'markers+text',
+                marker: {color: 'black', size: 8, symbol: 'x'},
+                text: [lang.value === 'zh' ? '磁轴' : 'Magnetic Axis'],
+                textposition: 'bottom center',
+                textfont: {color: 'black', size: 9},
+                name: lang.value === 'zh' ? '磁轴' : 'Magnetic Axis',
+                showlegend: false,
+                hoverinfo: 'skip'
+            });
+            
+            // 生成装置信息标题 - 显示预设场景名称
+            const deviceName = selectedPreset.value || 'Custom';
+            const deviceInfo = `${deviceName}: R₀=${params.R0}m, A=${params.A}, κ=${params.kappa}, δ=${params.delta}, g=${params.g}m`;
+            const physicsInfo = `${icaseMap[params.icase]} Reaction: nᵢ₀=${params.ni0}×10²⁰m⁻³, Tᵢ₀=${params.Ti0}keV, Bₜ₀=${params.BT0}T, Iₚ=${params.Ip}MA, τE=${params.tauE}s`;
+            
+            const layout = {
+                title: {
+                    text: lang.value === 'zh' ? 
+                        `托卡马克截面图<br><sub style="font-size: 10px;">${deviceInfo}<br>${physicsInfo}</sub>` :
+                        `Tokamak Cross Section<br><sub style="font-size: 10px;">${deviceInfo}<br>${physicsInfo}</sub>`,
+                    font: {size: 14}
+                },
+                xaxis: {
+                    title: 'R [m]',
+                    scaleanchor: 'y',
+                    scaleratio: 1,
+                    tickfont: {size: 10},
+                    range: [0, null]  // X轴从0开始，不显示负值
+                },
+                yaxis: {
+                    title: 'Z [m]',
+                    tickfont: {size: 10}
+                },
+                showlegend: true,
+                legend: {
+                    x: 1.01,
+                    y: 1,
+                    xanchor: 'left',
+                    yanchor: 'top',
+                    font: {size: 11}
+                },
+                autosize: true,
+                font: {size: 11},
+                margin: {r: 120, l: 60, t: 100, b: 60}
+            };
+            
+            const config = {
+                responsive: true,
+                modeBarButtonsToRemove: [
+                    'select2d', 'lasso2d', 'autoScale2d', 'hoverClosestCartesian',
+                    'hoverCompareCartesian', 'toggleSpikelines', 'downloadPlot'
+                ],
+                displayModeBar: true,
+                displaylogo: false
+            };
+            
+            // 获取容器尺寸
+            const shapeContainer = document.getElementById('shape-container');
+            const containerWidth = shapeContainer.offsetWidth || window.innerWidth * 0.8;
+            const containerHeight = shapeContainer.offsetHeight || window.innerHeight * 0.7;
+            
+            layout.width = containerWidth;
+            layout.height = containerHeight;
+            
+            Plotly.newPlot('shape-container', plotData, layout, config);
+        };
+
+        // 更新等高线图中的当前点位置
+        const updateCurrentPointInPlot = () => {
+            const plotDiv = document.getElementById('plot-container');
+            if (plotDiv && window.Plotly && plotDiv.data) {
+                // 找到当前点的trace（通常是最后一个或倒数第二个）
+                const currentPointTraceIndex = plotDiv.data.findIndex(trace => 
+                    trace.name === (lang.value === 'zh' ? '当前点' : 'Selected')
+                );
+                
+                if (currentPointTraceIndex !== -1) {
+                    // 更新当前点的位置
+                    const update = {
+                        x: [[params[scanX.value]]],
+                        y: [[params[scanY.value]]]
+                    };
+                    
+                    Plotly.restyle(plotDiv, update, currentPointTraceIndex);
+                    
+                    // 同时更新详细结果
+                    calculateSingle();
+                }
+            }
+        };
+
+        const runScan = async () => {
+            scanning.value = true;
+            statusMessage.value = t('scanning');
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            try {
+                sgmv_cache.clear();
+                const x_vec = linspace(scanRange.xStart, scanRange.xEnd, scanRange.xSteps);
+                const y_vec = linspace(scanRange.yStart, scanRange.yEnd, scanRange.ySteps);
+                
+                // 初始化结果数组
+                const results = { Qfus: [], H98: [], HST: [], Pheat: [], Pfus: [], Pbrem: [], Eth: [], ne0: [], Vp: [], betaN: [], nGw: [], betaT: [] };
+                Object.keys(results).forEach(k => { 
+                    results[k] = Array(y_vec.length).fill(0).map(() => Array(x_vec.length).fill(NaN)); 
+                });
+
+                // 计算网格点
+                for (let i = 0; i < y_vec.length; i++) {
+                    for (let j = 0; j < x_vec.length; j++) {
+                        const p = {...params};
+                        p[scanX.value] = x_vec[j];
+                        p[scanY.value] = y_vec[i];
+                        
+                        const ni0_actual = p.ni0 * 1e20;
+                        const res = funsc(
+                            p.R0, p.A, p.kappa, p.delta, p.Sn, p.ST,
+                            ni0_actual, p.Ti0, p.fT, p.fsig, p.f1,
+                            p.BT0, p.Ip, p.tauE, p.fHe, p.fimp, p.Zimp,
+                            p.Rw, p.g, p.icase
+                        );
+                        
+                        if (res && res.Qfus) {
+                            results.Qfus[i][j] = res.Qfus;
+                            results.H98[i][j] = res.H98;
+                            results.HST[i][j] = res.HST;
+                            results.Pheat[i][j] = res.Pheat;
+                            results.Pfus[i][j] = res.Pfus;
+                            results.Pbrem[i][j] = res.Pbrem;
+                            results.Eth[i][j] = res.Eth;
+                            results.ne0[i][j] = res.ne0 / 1e20; // 转换为10²⁰单位
+                            results.Vp[i][j] = res.Vp;
+                            results.betaN[i][j] = res.betaN;
+                            results.nGw[i][j] = res.nbar_o_nGw;
+                            results.betaT[i][j] = res.betaT * 100;
+                        }
+                    }
+                }
+                
+                // 绘制等高线图
+                const plotData = [];
+                // 使用界面设置的best region阈值
+                const { Pheatmax, Pfusmin, Qmin, n0max } = bestRegionThresholds;
+                
+                // 根据MATLAB代码设置精确的等高线数值，包含动态阈值，按图例顺序排列
+                // 创建去重且有序的levels数组的辅助函数
+                const createUniqueSortedLevels = (arr) => {
+                    return [...new Set(arr)].sort((a, b) => a - b);
+                };
+                
+                const plotOpts = [
+                    {id:'Pheat', name:'Pheat [MW]', z:results.Pheat, levels:createUniqueSortedLevels([5,10,50,Pheatmax,100])},
+                    {id:'Pfus', name:'Pfus [MW]', z:results.Pfus, levels:createUniqueSortedLevels([1,10,50,Pfusmin,100,500,1000])},
+                    {id:'Pbrem', name:'Pbrem [MW]', z:results.Pbrem, levels:[0.1,0.5,1,5,10]},
+                    {id:'Eth', name:'Eth [MJ]', z:results.Eth, levels:[10,50,100,500,1000]},
+                    {id:'ne0', name:'ne0 [10²⁰]', z:results.ne0, levels:[0.5,1,2,5,10]},
+                    {id:'Qfus', name:'Qfus', z:results.Qfus, levels:createUniqueSortedLevels([0.01,0.1,Qmin,10,100])},
+                    {id:'H98', name:'H98', z: results.H98, levels:[0.5,1,2,5,10]},
+                    {id:'HST', name:'HST', z: results.HST, levels:[0.5,1,2,5,10]},
+                    {id:'Vp', name:'Vp [m³]', z:results.Vp, levels:[50,100,500,1000,5000]},
+                    {id:'betaT', name:'βt (%)', z:results.betaT, levels:[0.01,0.1,0.5,1]},
+                    {id:'betaN', name:'βN', z:results.betaN, levels:[1,3,10]},
+                    {id:'nGw', name:'n/nGw', z:results.nGw, levels:createUniqueSortedLevels([1.0,n0max,0.5])}
+                ];
+                
+                // 根据MATLAB代码设置颜色和线型，参考scan2d_sc.m第280-295行，调整线宽使其更细
+                const plotSettings = {
+                    'Pheat': {color: 'red', width: 1.5, dash: 'solid'},         // 红色实线
+                    'Pfus': {color: 'blue', width: 1.5, dash: 'solid'},         // 蓝色实线
+                    'Pbrem': {color: 'orange', width: 1.5, dash: 'solid'},      // 橙色实线
+                    'Eth': {color: 'purple', width: 1.5, dash: 'solid'},        // 紫色实线
+                    'ne0': {color: 'brown', width: 1.5, dash: 'solid'},         // 棕色实线
+                    'Qfus': {color: 'green', width: 2, dash: 'solid'},          // 绿色实线（稍粗）  
+                    'H98': {color: 'magenta', width: 1.5, dash: 'solid'},       // 品红色实线
+                    'HST': {color: 'magenta', width: 1.5, dash: 'dash'},        // 品红色虚线
+                    'Vp': {color: 'darkgreen', width: 1.5, dash: 'solid'},      // 深绿色实线
+                    'betaT': {color: 'cyan', width: 1.5, dash: 'solid'},        // 青色实线
+                    'betaN': {color: 'gold', width: 1.5, dash: 'solid'},        // 黄色实线(MATLAB中是yellow)
+                    'nGw': {color: 'black', width: 1.5, dash: 'solid'}          // 黑色实线
+                };
+
+                plotOpts.forEach(opt => {
+                    if (plotOptions.value.includes(opt.id)) {
+                        const setting = plotSettings[opt.id] || {color: 'black', width: 2, dash: 'solid'};
+                        
+                        // 调试信息：确认levels设置
+                        console.log(`Drawing ${opt.id} with levels:`, opt.levels);
+                        
+                        // 为每个等高线值创建单独的trace，使用start/end/size方式
+                        opt.levels.forEach(level => {
+                            plotData.push({
+                                name: opt.name,
+                                type: 'contour',
+                                x: x_vec,
+                                y: y_vec,
+                                z: opt.z,
+                                autocontour: false,
+                                contours: {
+                                    coloring: 'lines',
+                                    showlabels: true,
+                                    labelfont: {color: 'black', size: 9},
+                                    start: level,      // 使用start/end/size方式
+                                    end: level,        // end等于start，只绘制这一条等高线
+                                    size: 1            // step为1，但由于start=end，只有一条线
+                                },
+                                line: {
+                                    width: setting.width, 
+                                    color: setting.color,
+                                    dash: setting.dash
+                                },
+                                colorscale: [[0, setting.color], [1, setting.color]],
+                                showlegend: false,
+                                showscale: false
+                            });
+                        });
+                        
+                        // 为每个物理量创建一个代表性的线条用于图例
+                        plotData.push({
+                            x: [null],
+                            y: [null],
+                            mode: 'lines',
+                            line: {
+                                color: setting.color, 
+                                width: 4,
+                                dash: setting.dash
+                            },
+                            name: opt.name,
+                            showlegend: true,
+                            hoverinfo: 'skip'
+                        });
+                    }
+                });
+                
+                // 添加best region标记（根据界面设置的阈值）
+                const bestRegionX = [], bestRegionY = [];
+                for (let i = 0; i < y_vec.length; i++) {
+                    for (let j = 0; j < x_vec.length; j++) {
+                        if (results.nGw[i][j] <= n0max && 
+                            results.Pfus[i][j] >= Pfusmin && 
+                            results.Qfus[i][j] >= Qmin && 
+                            results.Pheat[i][j] <= Pheatmax) {
+                            bestRegionX.push(x_vec[j]);
+                            bestRegionY.push(y_vec[i]);
+                        }
+                    }
+                }
+                
+                if (bestRegionX.length > 0) {
+                    plotData.push({
+                        x: bestRegionX,
+                        y: bestRegionY,
+                        type: 'scatter',
+                        mode: 'markers',
+                        marker: {color: 'black', size: 3, symbol: 'x'},
+                        name: lang.value === 'zh' ? '最佳区域' : 'Best region',
+                        showlegend: true
+                    });
+                }
+
+                // 添加当前参数点 - 根据MATLAB代码：红色五角星，黄色填充，大小13
+                plotData.push({
+                    x: [params[scanX.value]],
+                    y: [params[scanY.value]],
+                    type: 'scatter',
+                    mode: 'markers',
+                    marker: {
+                        color: 'yellow', 
+                        size: 13, 
+                        symbol: 'star', 
+                        line: {color: 'red', width: 2}
+                    },
+                    name: lang.value === 'zh' ? '当前点' : 'Selected',
+                    showlegend: true
+                });
+                
+                // 计算当前参数点的结果用于显示
+                const ni0_actual = params.ni0 * 1e20;
+                const currentRes = funsc(
+                    params.R0, params.A, params.kappa, params.delta, params.Sn, params.ST,
+                    ni0_actual, params.Ti0, params.fT, params.fsig, params.f1,
+                    params.BT0, params.Ip, params.tauE, params.fHe, params.fimp, params.Zimp,
+                    params.Rw, params.g, params.icase
+                );
+                
+                // 生成详细的参数信息 - 更紧凑的格式，保留3位小数
+                const paramInfo = `icase=${params.icase}(${icaseMap[params.icase]}), nᵢ₀=${(ni0_actual/1e20).toFixed(1)}e+20m⁻³, Tᵢ₀=${params.Ti0}keV, R₀=${params.R0}m, A=${params.A}, Bₜ₀=${params.BT0}T,<br>δ=${params.delta}, κ=${params.kappa}, τE=${params.tauE}s, Iₚ=${params.Ip}MA, Sₙ=${params.Sn}, Sₜ=${params.ST}, fₜₐᵥₑ=${currentRes.fTavg.toFixed(3)}, fₙₐᵥₑ=${currentRes.fnavg.toFixed(3)},<br>fₜ=${params.fT.toFixed(3)}, f₋sig=${params.fsig.toFixed(3)}, f₁=${params.f1.toFixed(3)}, fHe=${params.fHe.toFixed(3)}, fimp=${params.fimp.toFixed(3)}, Zimp=${params.Zimp}, Rw=${params.Rw}, g=${params.g}m`;
+
+                // 生成详细的Y轴标题，包含所有相关信息 - 参照MATLAB版本补全
+                let yAxisTitle;
+                
+                // 构建完整的结果信息字符串，分为4行显示，使用原格式
+                const resultLabels1 = [
+                    `P_heat=${currentRes.Pheat.toFixed(3)}MW`,
+                    `P_fus=${currentRes.Pfus.toFixed(3)}MW`,
+                    `P_brem=${currentRes.Pbrem.toFixed(3)}MW`
+                ];
+                const resultLabels2 = [
+                    `P_cycl=${currentRes.Pcycl.toFixed(3)}MW`,
+                    `E_th=${currentRes.Eth.toFixed(3)}MJ`,
+                    `ne0=${(currentRes.ne0/1e20).toFixed(3)}×10²⁰m⁻³`
+                ];
+                const resultLabels3 = [
+                    `Q_fus=${currentRes.Qfus.toFixed(2)}`,
+                    `H_98=${currentRes.H98.toFixed(3)}`,
+                    `H_ST=${currentRes.HST.toFixed(3)}`,
+                    `β_N=${currentRes.betaN.toFixed(3)}`
+                ];
+                const resultLabels4 = [
+                    `V_p=${currentRes.Vp.toFixed(3)}m³`,
+                    `S_p=${currentRes.Sp.toFixed(3)}m²`,
+                    `n_avg/n_G=${currentRes.nbar_o_nGw.toFixed(3)}`,
+                    `q=${currentRes.q.toFixed(3)}`,
+                    `β_T=${(currentRes.betaT*100).toFixed(2)}%`
+                ];
+                
+                // 获取Y轴参数的标签和单位
+                let yParamLabel = scanY.value;
+                if (scanY.value === 'ni0') yParamLabel = `${scanY.value} [10²⁰ m⁻³]`;
+                else if (scanY.value === 'Ti0') yParamLabel = `${scanY.value} [keV]`;
+                else if (scanY.value === 'BT0') yParamLabel = `${scanY.value} [T]`;
+                else if (scanY.value === 'Ip') yParamLabel = `${scanY.value} [MA]`;
+                else if (scanY.value === 'tauE') yParamLabel = `${scanY.value} [s]`;
+                else if (scanY.value === 'R0') yParamLabel = `${scanY.value} [m]`;
+                
+                // 组合Y轴标题，分为4行显示
+                yAxisTitle = `${yParamLabel}, ${resultLabels1.join(', ')}<br>${resultLabels2.join(', ')}<br>${resultLabels3.join(', ')}<br>${resultLabels4.join(', ')}`;
+
+                // X轴标题 - 根据界面设置动态生成best region定义
+                const bestRegionText = `nₐᵥₘ/nG<${n0max}, Q>${Qmin}, Pfus>${Pfusmin}MW, Pheat<${Pheatmax}MW`;
+                
+                // 动态生成X轴标题，包含单位信息
+                let xAxisUnit = '';
+                if (scanX.value === 'Ti0') xAxisUnit = 'keV';
+                else if (scanX.value === 'ni0') xAxisUnit = '10²⁰ m⁻³';
+                else if (scanX.value === 'BT0') xAxisUnit = 'T';
+                else if (scanX.value === 'Ip') xAxisUnit = 'MA';
+                else if (scanX.value === 'tauE') xAxisUnit = 's';
+                else if (scanX.value === 'R0') xAxisUnit = 'm';
+                
+                const bestRegionLabel = lang.value === 'zh' ? '最佳区域' : 'Best region';
+                const xAxisTitle = `${scanX.value}${xAxisUnit ? ' [' + xAxisUnit + ']' : ''}, ${bestRegionLabel}: ${bestRegionText}`;
+                
+                const layout = {
+                    title: {
+                        text: `POPCON (${scanX.value},${scanY.value})<br><sub style="font-size: 10px;">${paramInfo}</sub>`,
+                        font: {size: 14}
+                    },
+                    xaxis: {
+                        title: {
+                            text: xAxisTitle,
+                            font: {size: 10},
+                            standoff: 20
+                        },
+                        tickfont: {size: 10}
+                    },
+                    yaxis: {
+                        title: {
+                            text: yAxisTitle,
+                            font: {size: 10},
+                            standoff: 35
+                        },
+                        tickfont: {size: 10}
+                    },
+                    showlegend: true,
+                    legend: {
+                        x: 1.01, 
+                        y: 1,
+                        xanchor: 'left',
+                        yanchor: 'top',
+                        font: {size: 11, color: 'black'},
+                        itemsizing: 'constant',
+                        itemwidth: 40,
+                        traceorder: 'normal',
+                        bgcolor: 'rgba(255,255,255,0.9)',
+                        bordercolor: 'black',
+                        borderwidth: 1,
+                        itemclick: false,
+                        itemdoubleclick: false
+                    },
+                    autosize: true,
+                    font: {size: 11},
+                    margin: {r: 150, l: 80, t: 120, b: 100}
+                };
+                
+                const config = {
+                    responsive: true,
+                    modeBarButtonsToRemove: [
+                        'select2d', 'lasso2d', 'autoScale2d', 'hoverClosestCartesian', 
+                        'hoverCompareCartesian', 'toggleSpikelines', 'downloadPlot'
+                    ],
+                    displayModeBar: true,
+                    displaylogo: false,
+                    fillFrame: true,
+                    frameMargins: 0
+                };
+                
+                // 获取容器尺寸并设置图表尺寸
+                const plotContainer = document.getElementById('plot-container');
+                const containerWidth = plotContainer.offsetWidth || window.innerWidth * 0.8;
+                const containerHeight = plotContainer.offsetHeight || window.innerHeight * 0.7;
+                
+                layout.width = containerWidth;
+                layout.height = containerHeight;
+                
+                Plotly.newPlot('plot-container', plotData, layout, config);
+                
+                // 绘制剖面图
+                plotCrossSection();
+                // 绘制等离子体剖面图
+                plotPlasmaProfiles();
+                
+                // 切换到绘图标签页
+                activeTab.value = 'plot';
+                
+                // 延迟调整图表大小和图例位置以确保正确适配
+                setTimeout(() => {
+                    const plotDiv = document.getElementById('plot-container');
+                    if (plotDiv && window.Plotly) {
+                        // 重新计算容器尺寸
+                        const containerWidth = plotDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.95 : 0.6);
+                        const containerHeight = plotDiv.offsetHeight || window.innerHeight * 0.7;
+                        
+                        // 更新布局尺寸和图例位置
+                        Plotly.relayout(plotDiv, {
+                            width: containerWidth,
+                            height: containerHeight,
+                            'legend.x': 1.01,
+                            'legend.y': 1,
+                            'legend.xanchor': 'left',
+                            'legend.yanchor': 'top'
+                        });
+                    }
+                }, 200);
+                
+                // 计算当前点结果
+                await calculateSingle();
+                statusMessage.value = '';
+                
+            } catch (error) {
+                resultText.value = `扫描错误: ${error.message}`;
+                statusMessage.value = '';
+            } finally {
+                scanning.value = false;
+            }
+        };
+
+        // 监听几何参数变化，自动更新剖面图
+        watch([() => params.R0, () => params.A, () => params.kappa, () => params.delta, () => params.g], () => {
+            // 只在剖面图标签页激活时更新剖面图
+            if (activeTab.value === 'shape') {
+                setTimeout(() => {
+                    plotCrossSection();
+                }, 50); // 短暂延迟确保参数更新完成
+            }
+        }, { deep: true });
+
+        // 监听剖面参数变化，自动更新等离子体剖面图
+        watch([() => params.Sn, () => params.ST], () => {
+            // 只在剖面图标签页激活时更新等离子体剖面图
+            if (activeTab.value === 'shape') {
+                setTimeout(() => {
+                    plotPlasmaProfiles();
+                }, 50); // 短暂延迟确保参数更新完成
+            }
+        }, { deep: true });
+
+        // 监听所有物理参数变化，自动更新等高线图中的当前点标记
+        watch(params, () => {
+            // 只在等高线图标签页激活且已有扫描结果时更新当前点
+            if (activeTab.value === 'plot') {
+                const plotContainer = document.getElementById('plot-container');
+                if (plotContainer && plotContainer.children.length > 0) {
+                    // 更新等高线图中的当前点位置
+                    setTimeout(() => {
+                        updateCurrentPointInPlot();
+                    }, 50);
+                }
+            }
+        }, { deep: true });
+
+        // 监听面板收起状态变化，重新调整图表大小
+        watch(collapsedLeft, () => {
+            setTimeout(() => {
+                const plotDiv = document.getElementById('plot-container');
+                if (plotDiv && window.Plotly) {
+                    // 重新计算容器尺寸
+                    const containerWidth = plotDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.95 : 0.6);
+                    const containerHeight = plotDiv.offsetHeight || window.innerHeight * 0.7;
+                    
+                    // 更新布局尺寸和图例位置
+                    Plotly.relayout(plotDiv, {
+                        width: containerWidth,
+                        height: containerHeight,
+                        'legend.x': 1.01,  // 保持图例在右侧
+                        'legend.y': 1,
+                        'legend.xanchor': 'left',
+                        'legend.yanchor': 'top'
+                    });
+                }
+                
+                // 同时调整剖面图
+                const shapeDiv = document.getElementById('shape-container');
+                if (shapeDiv && window.Plotly) {
+                    const shapeWidth = shapeDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.57 : 0.36);
+                    const shapeHeight = shapeDiv.offsetHeight || window.innerHeight * 0.7;
+                    
+                    Plotly.relayout(shapeDiv, {
+                        width: shapeWidth,
+                        height: shapeHeight
+                    });
+                }
+                
+                // 同时调整等离子体剖面图
+                const densityDiv = document.getElementById('density-profile-container');
+                const temperatureDiv = document.getElementById('temperature-profile-container');
+                if (densityDiv && temperatureDiv && window.Plotly) {
+                    const profileWidth = densityDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.38 : 0.24);
+                    const profileHeight = densityDiv.offsetHeight || window.innerHeight * 0.35;
+                    
+                    Plotly.relayout(densityDiv, {
+                        width: profileWidth,
+                        height: profileHeight
+                    });
+                    
+                    Plotly.relayout(temperatureDiv, {
+                        width: profileWidth,
+                        height: profileHeight
+                    });
+                }
+            }, 300); // 等待CSS动画完成
+        });
+
+        // 监听标签页切换，确保绘图标签页的图表正确显示
+        watch(activeTab, (newTab) => {
+            if (newTab === 'plot') {
+                setTimeout(() => {
+                    const plotDiv = document.getElementById('plot-container');
+                    if (plotDiv && window.Plotly) {
+                        // 重新计算容器尺寸
+                        const containerWidth = plotDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.95 : 0.6);
+                        const containerHeight = plotDiv.offsetHeight || window.innerHeight * 0.7;
+                        
+                        // 更新布局尺寸和图例位置
+                        Plotly.relayout(plotDiv, {
+                            width: containerWidth,
+                            height: containerHeight,
+                            'legend.x': 1.01,
+                            'legend.y': 1,
+                            'legend.xanchor': 'left',
+                            'legend.yanchor': 'top'
+                        });
+                    }
+                }, 100);
+            } else if (newTab === 'shape') {
+                setTimeout(() => {
+                    // 切换到剖面图时自动更新图形
+                    plotCrossSection();
+                    plotPlasmaProfiles();
+                    
+                    const shapeDiv = document.getElementById('shape-container');
+                    if (shapeDiv && window.Plotly) {
+                        // 重新计算容器尺寸
+                        const containerWidth = shapeDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.57 : 0.36);
+                        const containerHeight = shapeDiv.offsetHeight || window.innerHeight * 0.7;
+                        
+                        // 更新布局尺寸
+                        Plotly.relayout(shapeDiv, {
+                            width: containerWidth,
+                            height: containerHeight
+                        });
+                    }
+                    
+                    // 同时调整剖面图容器
+                    const densityDiv = document.getElementById('density-profile-container');
+                    const temperatureDiv = document.getElementById('temperature-profile-container');
+                    if (densityDiv && temperatureDiv && window.Plotly) {
+                        const profileWidth = densityDiv.offsetWidth || window.innerWidth * (collapsedLeft.value ? 0.38 : 0.24);
+                        const profileHeight = densityDiv.offsetHeight || window.innerHeight * 0.35;
+                        
+                        Plotly.relayout(densityDiv, {
+                            width: profileWidth,
+                            height: profileHeight
+                        });
+                        
+                        Plotly.relayout(temperatureDiv, {
+                            width: profileWidth,
+                            height: profileHeight
+                        });
+                    }
+                }, 100);
+            }
+        });
+
+        // 保存参数功能
+        const saveParameters = () => {
+            try {
+                // 收集所有参数
+                const exportData = {
+                    metadata: {
+                        version: '1.0',
+                        timestamp: new Date().toISOString(),
+                        description: 'ENN Tokamak System Code Parameters and Settings',
+                        creator: 'ENN Tokamak System Code v1.0',
+                        language: lang.value
+                    },
+                    parameters: {
+                        ...params
+                    },
+                    scanSettings: {
+                        scanX: scanX.value,
+                        scanY: scanY.value,
+                        scanRange: {...scanRange}
+                    },
+                    bestRegionThresholds: {...bestRegionThresholds},
+                    plotOptions: [...plotOptions.value],
+                    selectedPreset: selectedPreset.value,
+                    language: lang.value
+                };
+                
+                // 如果有计算结果，也一并保存
+                if (resultText.value && resultText.value !== t('clickToCalculate')) {
+                    exportData.results = {
+                        calculationText: resultText.value,
+                        calculationTimestamp: new Date().toISOString(),
+                        scanParameters: {
+                            xAxis: scanX.value,
+                            yAxis: scanY.value
+                        }
+                    };
+                }
+                
+                // 创建文件名
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+                const filename = `ETSC_data_${timestamp}.json`;
+                
+                // 创建下载链接
+                const dataStr = JSON.stringify(exportData, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                
+                // 显示成功消息
+                statusMessage.value = t('saveSuccess');
+                setTimeout(() => { statusMessage.value = ''; }, 3000);
+                
+            } catch (error) {
+                console.error('保存参数失败:', error);
+                statusMessage.value = t('saveError') || 'Save failed';
+                setTimeout(() => { statusMessage.value = ''; }, 3000);
+            }
+        };
+        
+
+        
+        // 触发文件选择
+        const triggerLoadFile = () => {
+            const fileInput = document.querySelector('input[type="file"]');
+            if (fileInput) {
+                fileInput.click();
+            }
+        };
+        
+        // 加载参数功能
+        const loadParameters = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    
+                    // 验证文件格式
+                    if (!data.parameters || !data.scanSettings) {
+                        throw new Error('Invalid file format');
+                    }
+                    
+                    // 加载参数
+                    if (data.parameters) {
+                        Object.keys(data.parameters).forEach(key => {
+                            if (key in params) {
+                                params[key] = data.parameters[key];
+                            }
+                        });
+                    }
+                    
+                    // 加载扫描设置
+                    if (data.scanSettings) {
+                        if (data.scanSettings.scanX) scanX.value = data.scanSettings.scanX;
+                        if (data.scanSettings.scanY) scanY.value = data.scanSettings.scanY;
+                        if (data.scanSettings.scanRange) {
+                            Object.keys(data.scanSettings.scanRange).forEach(key => {
+                                if (key in scanRange) {
+                                    scanRange[key] = data.scanSettings.scanRange[key];
+                                }
+                            });
+                        }
+                    }
+                    
+                    // 加载Best Region阈值
+                    if (data.bestRegionThresholds) {
+                        Object.keys(data.bestRegionThresholds).forEach(key => {
+                            if (key in bestRegionThresholds) {
+                                bestRegionThresholds[key] = data.bestRegionThresholds[key];
+                            }
+                        });
+                    }
+                    
+                    // 加载绘图选项
+                    if (data.plotOptions && Array.isArray(data.plotOptions)) {
+                        plotOptions.value = [...data.plotOptions];
+                    }
+                    
+                    // 加载其他设置
+                    if (data.selectedPreset) {
+                        selectedPreset.value = data.selectedPreset;
+                    }
+                    if (data.language) {
+                        setLang(data.language);
+                    }
+                    
+                    // 加载计算结果（如果存在）
+                    if (data.results && data.results.calculationText) {
+                        resultText.value = data.results.calculationText;
+                    }
+                    
+                    // 显示成功消息
+                    statusMessage.value = t('loadSuccess');
+                    setTimeout(() => { statusMessage.value = ''; }, 3000);
+                    
+                } catch (error) {
+                    console.error('加载参数失败:', error);
+                    statusMessage.value = t('loadError') || 'Load failed';
+                    setTimeout(() => { statusMessage.value = ''; }, 3000);
+                }
+            };
+            
+            reader.onerror = () => {
+                statusMessage.value = t('loadError') || 'Load failed';
+                setTimeout(() => { statusMessage.value = ''; }, 3000);
+            };
+            
+            reader.readAsText(file);
+            
+            // 清空文件输入，允许重复选择相同文件
+            event.target.value = '';
+        };
+
+        // 初始化
+        onMounted(() => {
+            loadPreset();
+        });
+
+        return {
+            lang, activeTab, calculating, scanning, statusMessage, resultText, collapsedLeft, showHelp,
+            paramDefs, geometryParams, plasmaParams, otherParams, presets, icaseMap, params, selectedPreset,
+            scanX, scanY, scanRange, plotOptions, plotQuantities, bestRegionThresholds,
+            t, setLang, loadPreset, calculateSingle, runScan, plotCrossSection, plotDensityProfile, plotTemperatureProfile, plotPlasmaProfiles, updateCurrentPointInPlot,
+            saveParameters, triggerLoadFile, loadParameters
+        };
+    }
+});
+
+// 注册Element Plus组件
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html> 
